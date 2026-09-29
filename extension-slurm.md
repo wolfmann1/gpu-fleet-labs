@@ -49,9 +49,11 @@ dstack fleet delete home                     # dstack stops using the GPU node
 for ns in team-a team-b; do kubectl -n $ns delete jobs --all; done   # k3s training jobs off the GPUs
 ```
 
-The rest of this lab runs on the GPU node; SSH in (`ssh chris@192.168.1.50`) and stay there.
+dstack no longer schedules work onto the GPU node, and the `team-a` and `team-b` training jobs are gone from k3s, so both GPUs are free. The rest of this lab runs on the GPU node; SSH in (`ssh chris@192.168.1.50`) and stay there.
 
 ### B1. Packages
+
+Install Slurm, the munge authentication service and the Python tooling, then start munge and confirm it can encode and decode a credential. `slurmd -C` reports this machine's hardware in the format `slurm.conf` expects.
 
 **On the GPU node:**
 
@@ -66,19 +68,19 @@ Copy the `CPUs=`, `Boards=`, `SocketsPerBoard=`, `CoresPerSocket=`, `ThreadsPerC
 
 ### B2. Configuration
 
-`/etc/slurm/gres.conf`:
+Tell Slurm which device files hold the GPUs. This file names the node, the resource type and the two NVIDIA devices.
 
-**File on the GPU node:**
+**File on the GPU node:** `/etc/slurm/gres.conf`
 
 ```
 NodeName=gpu-node Name=gpu Type=rtx3070 File=/dev/nvidia[0-1]
 ```
 
-(With one card: `File=/dev/nvidia0`, and `gpu:rtx3070:1` below.)
+`slurmd` reads this file at startup and maps each `gpu:rtx3070` unit to one device file. (With one card: `File=/dev/nvidia0`, and `gpu:rtx3070:1` below.)
 
-`/etc/slurm/slurm.conf`:
+The main configuration defines the cluster, the scheduler, the node and two partitions. Replace the node's hardware values with the ones you copied from `slurmd -C`.
 
-**File on the GPU node:**
+**File on the GPU node:** `/etc/slurm/slurm.conf`
 
 ```
 ClusterName=home
@@ -128,6 +130,8 @@ PartitionName=urgent Nodes=gpu-node Default=NO  MaxTime=INFINITE PriorityTier=10
 | `PreemptMode=REQUEUE` | Preempted jobs go back in the queue (and should resume from checkpoint) |
 | `ProctrackType=proctrack/linuxproc`, `TaskPlugin=task/none` | Simplest process tracking; production uses cgroups, which also stop a job from touching GPUs it wasn't allocated |
 
+Create the state and log directories, give them to the `slurm` user, then start the controller and the node agent.
+
 **On the GPU node:**
 
 ```bash
@@ -142,7 +146,7 @@ scontrol show node gpu-node | grep -E 'Gres|State'
 
 ### B3. A Python environment for jobs
 
-Slurm jobs use what's on the host, so give your user a PyTorch environment:
+Slurm jobs use what's on the host, so give your user a PyTorch environment. The second command puts the training and preflight scripts in `~/lab`.
 
 **On the GPU node:**
 
@@ -151,9 +155,11 @@ python3 -m venv ~/venv && ~/venv/bin/pip install torch
 mkdir -p ~/lab && cp train_ddp.py preflight.py ~/lab/     # copy the scripts over first
 ```
 
-`~/lab/train.sbatch`:
+`~/venv` now holds PyTorch, and `~/lab` holds `train_ddp.py` and `preflight.py`.
 
-**File on the GPU node:**
+The batch script requests one GPU, four CPUs, 12 GB of memory and a 30-minute limit, then runs the training script under `torchrun`.
+
+**File on the GPU node:** `~/lab/train.sbatch`
 
 ```bash
 #!/bin/bash
@@ -171,6 +177,8 @@ srun torchrun --nproc-per-node=${SLURM_GPUS_ON_NODE:-1} ~/lab/train_ddp.py \
      --steps 3000 --ckpt-dir ~/lab/ckpt/$SLURM_JOB_NAME
 ```
 
+`sbatch` reads the `#SBATCH` lines at submission; options given on the command line override them, which the exercises use. `--requeue` lets Slurm return the job to the queue after preemption, and `--ckpt-dir` gives each job name its own checkpoint directory.
+
 ---
 
 ## Exercises
@@ -178,6 +186,8 @@ srun torchrun --nproc-per-node=${SLURM_GPUS_ON_NODE:-1} ~/lab/train_ddp.py \
 All exercises run **on the GPU node**, in `~/lab`.
 
 ### S1. First job
+
+Submit the batch script, look at the queue and inspect what Slurm allocated. Replace `<id>` with the job ID that `sbatch` prints.
 
 **On the GPU node:**
 
@@ -245,6 +255,8 @@ In `gpu-fleet-lab/notes/slurm.md`:
 3. Who are the researchers asking for Slurm likely to be, and what do they actually want from it? Draft two questions to ask them.
 
 ## Clean up
+
+Stop both Slurm daemons and disable them so they don't start at boot.
 
 **On the GPU node:**
 

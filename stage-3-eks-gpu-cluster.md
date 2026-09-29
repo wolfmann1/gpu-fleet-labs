@@ -67,11 +67,9 @@ gpu-fleet-lab/eks/
 └── fsx.tf           optional FSx for Lustre
 ```
 
-Keep state in S3 as you did for helix-core-on-azure (there it was an Azure storage account; the idea is the same).
+`versions.tf` pins the Terraform and AWS provider versions and configures the backend. Keep state in S3 as you did for helix-core-on-azure (there it was an Azure storage account; the idea is the same).
 
-`versions.tf`:
-
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/versions.tf`
 
 ```hcl
 terraform {
@@ -104,9 +102,9 @@ variable "experiment" { default = "session-1" }
 
 ### B2. Network
 
-`network.tf`:
+`network.tf` builds the VPC across two Availability Zones in us-east-2, with private subnets for the nodes and public subnets for the NAT gateway.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/network.tf`
 
 ```hcl
 module "vpc" {
@@ -129,11 +127,9 @@ Nodes live in private subnets and reach the internet (image pulls, pip) through 
 
 ### B3. Cluster and node groups
 
-Check which Kubernetes versions EKS offers (`aws eks describe-cluster-versions --region us-east-2`) and use the newest standard-support one.
+Check which Kubernetes versions EKS offers (`aws eks describe-cluster-versions --region us-east-2`) and use the newest standard-support one. `eks.tf` defines the cluster, its add-ons and two managed node groups.
 
-`eks.tf`:
-
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/eks.tf`
 
 ```hcl
 module "eks" {
@@ -198,6 +194,8 @@ output "configure_kubectl" {
 | `node_repair_config` | Lets EKS act on those conditions: reboot or replace the node |
 | `desired_size = 2`, `min_size = 0` | Scale to zero between sessions without destroying the cluster, if you prefer that to a full destroy |
 
+Create the cluster, point kubectl at it, and list the nodes with their GPU label and instance type.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -206,11 +204,11 @@ $(terraform output -raw configure_kubectl)
 kubectl get nodes -L gpu-type,node.kubernetes.io/instance-type
 ```
 
-Cluster creation takes 10–15 minutes; that's the control plane being built.
+Cluster creation takes 10–15 minutes; that's the control plane being built. When it finishes, the node list shows one t3.large and two g6.xlarge nodes, with `l4` in the GPU-type column for the g6 pair.
 
 ### B4. GPU Operator, monitoring and Kueue
 
-Same as stage 2 B2–B5, pointed at this cluster:
+Install the same three Helm charts as stage 2 B2–B5, pointed at this cluster.
 
 **On the laptop (WSL2):**
 
@@ -226,9 +224,9 @@ helm install kueue oci://registry.k8s.io/kueue/charts/kueue --version=0.19.6 \
 
 The GPU Operator's pods must tolerate the GPU taint; the chart's defaults include a toleration for `nvidia.com/gpu`. Check that `nvidia-device-plugin-daemonset` pods are running on both GPU nodes and that each node advertises `nvidia.com/gpu: 1`.
 
-Apply the stage 2 Kueue objects with one change: the flavor now selects L4 nodes and tolerates the taint.
+The Kueue objects are the same as stage 2's, with a different flavor. Copy `~/gpu-fleet-lab/k8s/kueue-home.yaml` to `~/gpu-fleet-lab/eks/kueue-eks.yaml`, replace its ResourceFlavor with the one below, and change the flavor name in both ClusterQueues from `rtx3070` to `l4`. The new flavor selects the L4 nodes and tolerates their taint.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/kueue-eks.yaml` (ResourceFlavor section)
 
 ```yaml
 apiVersion: kueue.x-k8s.io/v1beta2
@@ -240,7 +238,19 @@ spec:
   - {key: nvidia.com/gpu, operator: Equal, value: "true", effect: NoSchedule}
 ```
 
-Set team-a's GPU `nominalQuota` to 2 so it can run the two-node job, and size its CPU and memory quotas to what the two g6.xlarge nodes can actually offer (4 vCPU and 16 GiB each, less system daemons). `kubectl describe node` shows each node's allocatable figures.
+Kueue adds these node labels and tolerations to the pods of every workload it admits under this flavor, so job specs don't need their own.
+
+Set team-a's GPU `nominalQuota` to 2 so it can run the two-node job, and size its CPU and memory quotas to what the two g6.xlarge nodes can actually offer (4 vCPU and 16 GiB each, less system daemons). `kubectl describe node` shows each node's allocatable figures. Then apply the file.
+
+**On the laptop (WSL2):**
+
+```bash
+cd ~/gpu-fleet-lab/eks
+kubectl apply -f kueue-eks.yaml
+kubectl get clusterqueues,localqueues -A
+```
+
+Both ClusterQueues and both LocalQueues should be listed against the EKS cluster. If a ClusterQueue is inactive, check that its flavor name matches the ResourceFlavor.
 
 ---
 
@@ -248,9 +258,9 @@ Set team-a's GPU `nominalQuota` to 2 so it can run the two-node job, and size it
 
 ### E1. A two-node training job
 
-`ddp.yaml` in namespace `team-a` (create the `lab-code` ConfigMap there first, as in stage 2 B6):
+This manifest defines a headless Service and an Indexed Job that runs one training rank on each GPU node. It runs in namespace `team-a`; create the `lab-code` ConfigMap there first, as in stage 2 B6.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/ddp.yaml`
 
 ```yaml
 apiVersion: v1
@@ -299,6 +309,10 @@ spec:
       - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 4Gi}}
 ```
 
+The Service name, the pod `subdomain` and `--master-addr` all use `ddp`, which is how rank 1 finds rank 0. The queue label submits the Job to Kueue's `research` queue.
+
+Submit the job, confirm the two pods landed on different GPU nodes, and follow rank 0's log.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -317,6 +331,8 @@ Then read the gap to production: on p5.48xlarge, NCCL would log the OFI plugin a
 
 ### E2. GPU health conditions
 
+Read the node conditions the monitoring agent sets, then search cluster events for GPU-related entries.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -331,9 +347,9 @@ Question to answer: with a Capacity Block, "replace the node" means getting a he
 
 ### E3. S3 through Pod Identity
 
-`storage.tf`:
+`storage.tf` creates an S3 bucket, an IAM role that only the EKS Pod Identity service can assume, and an association that ties the role to the `trainer` service account in `team-a`.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/storage.tf`
 
 ```hcl
 resource "aws_s3_bucket" "lab" {
@@ -382,6 +398,10 @@ resource "aws_eks_pod_identity_association" "trainer" {
 output "bucket" { value = aws_s3_bucket.lab.bucket }
 ```
 
+The role's policy allows listing the bucket and reading, writing and deleting its objects. `force_destroy` lets `terraform destroy` remove the bucket while it still holds objects.
+
+Apply the new resources, create the service account, then list the bucket from two pods: one as `trainer`, one as the default service account.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -398,9 +418,7 @@ kubectl -n team-a run s3test2 --rm -it --restart=Never --image=amazon/aws-cli --
 
 FSx for Lustre is what gives every node in a training job the same fast file system. Create it for one session only.
 
-`fsx.tf`:
-
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/fsx.tf`
 
 ```hcl
 resource "aws_security_group" "fsx" {
@@ -440,6 +458,8 @@ output "fsx_dns"       { value = aws_fsx_lustre_file_system.lab.dns_name }
 output "fsx_mountname" { value = aws_fsx_lustre_file_system.lab.mount_name }
 ```
 
+The security group opens the Lustre ports (988 and 1018–1023) to the VPC. The file system sits in the GPU nodes' subnet, imports the bucket's contents and exports to its `export/` prefix. The three outputs are the values the PersistentVolume below needs.
+
 Add the `aws-fsx-csi-driver` add-on to the `addons` map, apply, then create a static PersistentVolume and claim that point at the file system (the [FSx CSI driver static provisioning example](https://github.com/kubernetes-sigs/aws-fsx-csi-driver/tree/master/examples/kubernetes/static_provisioning) shows the fields: `volumeHandle` = file system ID, `volumeAttributes.dnsname` and `mountname`). Mount it at `/ckpt` in the `ddp` job and add `--ckpt-dir /ckpt/ddp`.
 
 **What to notice:** kill `ddp-1` mid-run; the Job fails (`backoffLimit: 0`), you resubmit, and both ranks resume from the checkpoint rank 0 wrote to the shared file system. Without shared storage, a restarted job on different nodes couldn't find its checkpoint. Also look at the S3 import: objects in the bucket appear as files in `/ckpt` without being copied first; Lustre loads them on first read. That's how large datasets reach a training fleet.
@@ -465,6 +485,8 @@ In `gpu-fleet-lab/notes/eks.md`:
 5. Which parts of this Terraform would you reuse for the reference fleet, and what would change (instance types, placement groups, Capacity Block reservations, EFA)?
 
 ## Clean up
+
+Remove the Helm releases, then destroy the Terraform resources.
 
 **On the laptop (WSL2):**
 

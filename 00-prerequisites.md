@@ -66,7 +66,9 @@ sudo apt autoremove -y
 
 On a clean machine the `purge` line finds nothing and does nothing. If you had already installed the NVIDIA Container Toolkit against `docker.io`, rerun its last two commands in [§1.2](#12-nvidia-container-toolkit) after Docker is reinstalled, so Docker's configuration includes the `nvidia` runtime again.
 
-**Add Docker's repository and install — on the GPU node:**
+Add Docker's apt repository with its signing key, then install Docker Engine, its CLI, `containerd.io`, and the Buildx and Compose plugins from that repository.
+
+**On the GPU node:**
 
 ```bash
 sudo apt update
@@ -90,7 +92,9 @@ The `tee ... <<EOF` command is a *here-document*: the shell keeps reading lines 
 
 The source file uses apt's newer deb822 format (`.sources`, one field per line); the NVIDIA and Kubernetes repositories below still use the one-line `.list` format. apt reads both.
 
-**Let your user run Docker, and start it at boot — on the GPU node:**
+Add your user to the `docker` group so you can run Docker commands without `sudo`, and enable Docker and containerd so they start at boot.
+
+**On the GPU node:**
 
 ```bash
 sudo usermod -aG docker $USER
@@ -100,7 +104,9 @@ newgrp docker          # or log out and back in
 
 Membership of the `docker` group is equivalent to root on this machine. That's acceptable on a lab box you own.
 
-**Check — on the GPU node:**
+Check that Docker runs, that the installed packages come from Docker's repository, and that containerd is healthy.
+
+**On the GPU node:**
 
 ```bash
 docker version                 # Server section shows Engine and containerd versions
@@ -109,7 +115,9 @@ docker run --rm hello-world
 systemctl status containerd --no-pager
 ```
 
-**If containerd errors persist** after the reinstall, look at the log first: `journalctl -u containerd -b --no-pager | tail -50`. Leftover state from the Ubuntu package can be moved aside (Docker has no images yet, so nothing is lost):
+The `hello-world` container prints a greeting and exits. The containerd status should read `active (running)`.
+
+**If containerd errors persist** after the reinstall, look at the log first: `journalctl -u containerd -b --no-pager | tail -50`. Leftover state from the Ubuntu package can be moved aside (Docker has no images yet, so nothing is lost).
 
 **On the GPU node:**
 
@@ -119,9 +127,11 @@ sudo mv /var/lib/containerd /var/lib/containerd.old
 sudo systemctl start containerd docker
 ```
 
+containerd recreates `/var/lib/containerd` when it starts. Run the checks above again to confirm the errors are gone.
+
 ### 1.2 NVIDIA Container Toolkit
 
-Install this *after* Docker, because its last step edits Docker's configuration.
+These commands add NVIDIA's apt repository, install the toolkit and register the `nvidia` runtime with Docker. Install it *after* Docker, because its last step edits Docker's configuration.
 
 **On the GPU node:**
 
@@ -140,18 +150,22 @@ sudo systemctl restart docker
 
 `nvidia-ctk runtime configure` adds an `nvidia` runtime entry to `/etc/docker/daemon.json`. Docker then uses it whenever a container is started with `--gpus`.
 
-**Check — on the GPU node:**
+Check that the runtime entry is in place and that a container can see the GPUs.
+
+**On the GPU node:**
 
 ```bash
 cat /etc/docker/daemon.json
 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi
 ```
 
+`daemon.json` should list `nvidia` under `runtimes`, and the container should print the same `nvidia-smi` table you see on the host.
+
 k3s, installed in stage 2, detects the same toolkit and registers it with its own embedded containerd. Docker's `containerd.io` and k3s's containerd run side by side with separate sockets (`/run/containerd/containerd.sock` and `/run/k3s/containerd/containerd.sock`).
 
 ### 1.3 Slurm and Python packages
 
-For the [Slurm extension](extension-slurm.md). Both come from Ubuntu's `universe` component, which Ubuntu Server enables by default (`grep -r universe /etc/apt/sources.list.d/ubuntu.sources` to confirm).
+Install Slurm, munge and the Python packages used by the [Slurm extension](extension-slurm.md). All of them come from Ubuntu's `universe` component, which Ubuntu Server enables by default (`grep -r universe /etc/apt/sources.list.d/ubuntu.sources` to confirm).
 
 **On the GPU node:**
 
@@ -192,6 +206,8 @@ Then close the Ubuntu terminal, run `wsl --shutdown` in PowerShell, and open Ubu
 
 ### 2.2 Base packages
 
+Install the command-line tools that later sections and the labs depend on.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -202,6 +218,8 @@ sudo apt install -y git openssh-client jq unzip curl ca-certificates gnupg
 The dstack server requires git and OpenSSH; `jq` is used in stage 1; `unzip` by the AWS CLI installer.
 
 ### 2.3 uv and dstack
+
+Install uv, Astral's Python tool manager, then use it to install the dstack CLI.
 
 **On the laptop (WSL2):**
 
@@ -232,11 +250,11 @@ sudo apt update && sudo apt install -y kubectl
 kubectl version --client
 ```
 
-To move to a later minor version, change `v1.36` in both lines and reinstall.
+`kubectl version --client` should report a v1.36 client. To move to a later minor version, change `v1.36` in both lines and reinstall.
 
 ### 2.5 Helm
 
-Helm 4 is current. From Helm's apt repository (hosted on Buildkite); the script checks the key's fingerprint before trusting it.
+Helm 4 is current and comes from Helm's apt repository, hosted on Buildkite. Download the repository's signing key first and check its fingerprint against the one Helm publishes, so apt trusts only Helm's own key.
 
 **On the laptop (WSL2):**
 
@@ -246,6 +264,15 @@ sudo apt install -y curl gpg apt-transport-https
 curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey > /tmp/helm.gpg
 [ "$(gpg --show-keys --with-colons /tmp/helm.gpg | awk -F: '$1 == "fpr" {print $10}' | head -n 1)" = "$HELM_BUILDKITE_APT_KEY_ID" ] \
     && echo "key OK" || echo "UNEXPECTED KEY - stop here"
+```
+
+The last line prints `key OK` when the fingerprints match. If it prints `UNEXPECTED KEY`, stop and don't run the next block.
+
+With the key verified, install it as a keyring, add the repository and install Helm.
+
+**On the laptop (WSL2):**
+
+```bash
 gpg --dearmor < /tmp/helm.gpg | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
 echo "deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" \
     | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
@@ -253,7 +280,7 @@ sudo apt update && sudo apt install -y helm
 helm version
 ```
 
-Only continue past the fourth line if it prints `key OK`.
+`helm version` should report a v4 release.
 
 ### 2.6 kind
 
@@ -267,9 +294,11 @@ chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
 kind version
 ```
 
+`kind version` should print `kind v0.33.0` followed by the Go version and platform.
+
 ### 2.7 Terraform
 
-From HashiCorp's apt repository.
+Add HashiCorp's apt repository and signing key, then install Terraform from it.
 
 **On the laptop (WSL2):**
 
@@ -281,7 +310,7 @@ sudo apt update && sudo apt install -y terraform
 terraform version
 ```
 
-If you already run Terraform on Windows for helix-core-on-azure, install it in WSL as well; the stage 3 commands assume a Linux shell.
+`terraform version` prints the installed version. If you already run Terraform on Windows for helix-core-on-azure, install it in WSL as well; the stage 3 commands assume a Linux shell.
 
 ### 2.8 AWS CLI v2
 
@@ -294,6 +323,8 @@ curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2
 unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install
 aws --version
 ```
+
+The installer places the `aws` command in `/usr/local/bin`. `aws --version` should print a line beginning `aws-cli/2`.
 
 ## 3. AWS account
 
@@ -334,12 +365,16 @@ New accounts usually start with a quota of **0 vCPUs** for GPU instance families
 
 **In a browser, in the AWS console,** with the region set to **US East (Ohio)**: **Service Quotas → AWS services → Amazon Elastic Compute Cloud (Amazon EC2) → Running On-Demand G and VT instances → Request increase at account level**, new value **16**. In the description, say it's for a personal Kubernetes GPU lab using two g6.xlarge instances.
 
-The quota counts vCPUs, not instances: a g6.xlarge has 4 vCPUs, so 16 allows the two lab nodes with room for a larger instance type if you try one. The same request can be made from the CLI once §3.4 is done:
+The quota counts vCPUs, not instances: a g6.xlarge has 4 vCPUs, so 16 allows the two lab nodes with room for a larger instance type if you try one. The same request can be made from the CLI once §3.4 is done.
+
+**On the laptop (WSL2):**
 
 ```bash
 aws service-quotas request-service-quota-increase --region us-east-2 \
     --service-code ec2 --quota-code L-DB2E81BA --desired-value 16
 ```
+
+The command returns the new request with a status of `PENDING`. The [final check](#final-check) shows how to confirm when it is approved.
 
 ### 3.4 Sign-in for the CLI, Terraform and dstack
 
@@ -357,6 +392,8 @@ The CLI, Terraform and dstack all need AWS credentials. `aws configure sso` does
 3. **Permission sets → Create permission set → Predefined → AdministratorAccess**, with a session duration of 8 hours. The labs create IAM roles (stage 3 Pod Identity), which the narrower PowerUserAccess set can't do.
 4. **AWS accounts** → select your account → **Assign users or groups** → `chris` → the AdministratorAccess permission set.
 5. Identity Center **Dashboard** → **Settings summary** → copy the **AWS access portal URL**, which looks like `https://d-xxxxxxxxxx.awsapps.com/start`. It only exists once Identity Center is enabled. You can replace the `d-xxxxxxxxxx` part with a name of your choice under **Settings → Identity source → Customize**, which makes it easier to remember.
+
+With Identity Center set up, create a CLI profile that signs in through it.
 
 **On the laptop (WSL2):**
 
@@ -381,7 +418,9 @@ The CLI prints a URL and a code. Open the URL in your Windows browser, confirm t
 | CLI default output format | `json` |
 | Profile name | `lab` |
 
-Make it the default for this shell and check it:
+Set `lab` as the default profile for every new shell, then confirm the CLI can use it.
+
+**On the laptop (WSL2):**
 
 ```bash
 echo 'export AWS_PROFILE=lab' >> ~/.bashrc && source ~/.bashrc

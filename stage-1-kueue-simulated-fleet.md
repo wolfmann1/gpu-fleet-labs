@@ -84,6 +84,8 @@ From [prerequisites §2](00-prerequisites.md#2-laptop-wsl2-ubuntu-2404): Docker 
 
 ### B2. The cluster
 
+Create a kind cluster named `fleet-sim` and list its nodes.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -95,6 +97,8 @@ One real node, `fleet-sim-control-plane`, running in a Docker container. It runs
 
 ### B3. kwok
 
+Install the kwok controller and its `stage-fast` stage set from the latest GitHub release.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -105,7 +109,9 @@ kubectl apply -f "https://github.com/${KWOK_REPO}/releases/download/${KWOK_LATES
 kubectl get stages
 ```
 
-`stage-fast` makes pods on fake nodes become Running at once, and makes Job-owned pods **complete** a second later. For this lab jobs need to keep running until you remove them or Kueue preempts them, so delete the completion stage:
+`kubectl get stages` lists the lifecycle stages the kwok controller now applies to pods on fake nodes.
+
+`stage-fast` makes pods on fake nodes become Running at once, and makes Job-owned pods **complete** a second later. For this lab jobs need to keep running until you remove them or Kueue preempts them, so delete the completion stage.
 
 **On the laptop (WSL2):**
 
@@ -119,7 +125,7 @@ Now a simulated training job runs until something stops it, which is closer to a
 
 `make-fleet.sh` generates the reference fleet's shape: 32 eight-GPU nodes and 4 single-GPU nodes.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/make-fleet.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -155,6 +161,10 @@ for i in $(seq -w 0 31); do node "p5-48xl-$i" p5.48xlarge 8 192 2Ti; done
 for i in $(seq 0 3);      do node "p5-4xl-$i"  p5.4xlarge  1 16  256Gi; done
 ```
 
+The script writes one Node manifest per fake machine to standard output, ready to pipe into `kubectl apply`.
+
+Make the script executable, apply its output, and confirm the nodes report an instance type and a GPU count.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -163,9 +173,13 @@ kubectl get nodes -L instance-type
 kubectl get nodes -o custom-columns='NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu' | head
 ```
 
+The node list should show 36 kwok nodes beside the control plane, and the GPU column should read 8 for each `p5-48xl` node.
+
 **Why the taint:** without it, the scheduler would also put system pods (Prometheus, Kueue) on fake nodes, where nothing would really run. The taint keeps everything off them except pods that tolerate it, and Kueue will add that toleration for workloads it admits.
 
 ### B5. Prometheus and Grafana
+
+Install kube-prometheus-stack into a `monitoring` namespace. It collects Kueue's metrics and hosts the Grafana dashboard you build in E7.
 
 **On the laptop (WSL2):**
 
@@ -179,6 +193,8 @@ That `--set` matters: by default this chart's Prometheus only scrapes ServiceMon
 
 ### B6. Kueue
 
+Install Kueue 0.19.6 with Helm, then apply Kueue's Prometheus manifest so the stack from B5 scrapes its metrics.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -188,15 +204,17 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/kueue/releases
 kubectl -n kueue-system get pods
 ```
 
-**All-or-nothing with ready pods.** Kueue admits a Job as a whole, but by default it considers the job started once admitted, even if some pods can't actually be scheduled (on a real cluster, a node might be missing or unhealthy). `waitForPodsReady` makes Kueue wait until every pod is Ready and evict and requeue the workload if that doesn't happen within a timeout. Look at the controller configuration:
+The last command should show a `kueue-controller-manager-…` pod as Running before you continue.
 
-**On the laptop (WSL2):** open the ConfigMap in your editor.
+**All-or-nothing with ready pods.** Kueue admits a Job as a whole, but by default it considers the job started once admitted, even if some pods can't actually be scheduled (on a real cluster, a node might be missing or unhealthy). `waitForPodsReady` makes Kueue wait until every pod is Ready and evict and requeue the workload if that doesn't happen within a timeout. The setting lives in the controller's ConfigMap, which the next command opens in your editor.
+
+**On the laptop (WSL2):**
 
 ```bash
 kubectl -n kueue-system edit configmap kueue-manager-config
 ```
 
-The controller's configuration is a YAML document inside the ConfigMap's `data` field. Find the `waitForPodsReady` block (commented out or present) and set it to:
+The controller's configuration is a YAML document inside the ConfigMap's `data` field. Find the `waitForPodsReady` block (commented out or present) and replace it in the editor with the text below.
 
 ```yaml
 waitForPodsReady:
@@ -204,13 +222,22 @@ waitForPodsReady:
   blockAdmission: true
 ```
 
-Save and close the editor, then, still on the laptop, restart the controller so it rereads its configuration: `kubectl -n kueue-system rollout restart deployment kueue-controller-manager`. `blockAdmission: true` admits one workload at a time until its pods are ready, which prevents two large jobs from each getting half their pods and deadlocking. The trade-off is slower admission when many jobs are waiting.
+Save and close the editor. The controller reads its configuration only at start-up, so restart it.
+
+**On the laptop (WSL2):**
+
+```bash
+kubectl -n kueue-system rollout restart deployment kueue-controller-manager
+kubectl -n kueue-system rollout status deployment kueue-controller-manager
+```
+
+The second command returns once the new controller pod is running with the updated setting. `blockAdmission: true` admits one workload at a time until its pods are ready, which prevents two large jobs from each getting half their pods and deadlocking. The trade-off is slower admission when many jobs are waiting.
 
 ### B7. Flavors, queues and teams
 
-`kueue-setup.yaml`:
+`kueue-setup.yaml` defines the two flavors, the three ClusterQueues, the team namespaces with their LocalQueues, and two priority classes.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/kueue-setup.yaml`
 
 ```yaml
 apiVersion: kueue.x-k8s.io/v1beta2
@@ -345,6 +372,10 @@ value: 1000
 description: "Paper or milestone deadlines, approved by research leads"
 ```
 
+The inline comments mark the fields that control sharing: the flavor tolerations, the preemption rules and the borrowing limit.
+
+Apply the file and list the queues it creates.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -356,9 +387,9 @@ Read the ClusterQueue spec before moving on. Every design decision about sharing
 
 ### B8. A job template
 
-`job.sh` creates a simulated training job:
+`job.sh` submits a simulated training job to a Kueue queue.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/job.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -395,7 +426,7 @@ Each pod asks for a whole p5 node. A 4-node job is a 32-GPU training run.
 
 ## Exercises
 
-Useful views, each in its own terminal:
+Open two terminals and run one of these views in each, so you can watch Kueue react during the exercises.
 
 **On the laptop (WSL2):**
 
@@ -404,9 +435,13 @@ watch -n2 kubectl get workloads -A
 watch -n2 'kubectl get clusterqueue -o custom-columns=NAME:.metadata.name,PENDING:.status.pendingWorkloads,ADMITTED:.status.admittedWorkloads'
 ```
 
+The first view lists every Workload and its admission state; the second shows pending and admitted counts per ClusterQueue.
+
 To see GPU usage and borrowing for a team: `kubectl get clusterqueue team-a -o jsonpath='{.status.flavorsUsage}' | jq`.
 
 ### E1. One job, end to end
+
+Submit a one-node job to team-a, then check the Job's `suspend` field, its Workload and the node its pod landed on.
 
 **On the laptop (WSL2):**
 
@@ -421,7 +456,7 @@ kubectl -n team-a get pods -o wide
 
 ### E2. Gang admission
 
-Fill team-a's quota exactly, then ask for more:
+Fill team-a's quota exactly, put 96 GPUs of work on team-b, then ask for more on team-a.
 
 **On the laptop (WSL2):**
 
@@ -436,9 +471,9 @@ Fill team-a's quota exactly, then ask for more:
 Now compare with plain Kubernetes, which has no gang admission. Kueue ignores Jobs without a queue label, so a copy of the template without the labels bypasses it:
 
 1. `cp job.sh raw-job.sh` and delete the `labels:` block (the two `kueue.x-k8s.io` lines and the `labels:` key).
-2. Kueue won't inject the flavor's node selector and toleration either, so add them under the pod `spec:`, beside `restartPolicy`:
+2. Kueue won't inject the flavor's node selector and toleration either, so add these lines under the pod `spec:`, beside `restartPolicy`.
 
-   **File on the laptop (WSL2):**
+   **File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/raw-job.sh`
 
    ```yaml
          nodeSelector: {instance-type: p5.48xlarge}
@@ -446,7 +481,9 @@ Now compare with plain Kubernetes, which has no gang admission. Kueue ignores Jo
          - {key: kwok.x-k8s.io/node, operator: Equal, value: fake, effect: NoSchedule}
    ```
 
-3. Run it:
+   Save the file. `raw-job.sh` now creates a plain Job that the kube-scheduler places on the fake nodes without Kueue.
+
+3. Delete the pending `a-extra` job, then submit a 6-node raw job in a new `nokueue` namespace and list its pods.
 
    **On the laptop (WSL2):**
 
@@ -461,6 +498,8 @@ Four pods start on the four free nodes and two stay Pending indefinitely. In a r
 
 ### E3. Borrowing
 
+Remove team-b's job so its share sits idle, then give team-a a 12-node job that fits only by borrowing.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -473,7 +512,7 @@ kubectl get clusterqueue team-a -o jsonpath='{.status.flavorsUsage}' | jq
 
 ### E4. Reclaim
 
-team-b comes back:
+team-b comes back and submits an 8-node job against its own quota.
 
 **On the laptop (WSL2):**
 
@@ -487,7 +526,7 @@ This is the policy that makes lending safe: a team lends idle GPUs knowing it ca
 
 ### E5. Priority within a team
 
-Reset team-a to a full quota of `batch` jobs, then submit a deadline job:
+Reset team-a to a full quota of `batch` jobs, then submit a deadline job.
 
 **On the laptop (WSL2):**
 
@@ -505,6 +544,8 @@ Then consider the policy question: who is allowed to use `deadline`? Kueue enfor
 
 ### E6. The dev queue
 
+Submit five one-node jobs to the `dev` queue, which has four single-GPU nodes behind it.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -516,6 +557,8 @@ The `dev` pods request 8 GPUs because of the template. Edit a copy of `job.sh` s
 **What to notice:** four are admitted onto the four singles; the fifth waits. The `dev` ClusterQueue has no cohort, so it can't borrow from the research teams and they can't borrow from it. Is that what you'd want? Separating interactive work from training capacity is common; the cost is idle singles when nobody is debugging.
 
 ### E7. Queue depth in Grafana
+
+Print the Grafana admin password, then forward Grafana's service to port 3001 on the laptop. The port-forward holds the terminal until you stop it.
 
 **On the laptop (WSL2):**
 
@@ -557,11 +600,15 @@ In `gpu-fleet-lab/notes/kueue.md`:
 
 ## Clean up
 
+Delete the kind cluster once you have finished the exercises and the record.
+
 **On the laptop (WSL2):**
 
 ```bash
 kind delete cluster --name fleet-sim
 ```
+
+This removes the Docker container that hosted the control plane, along with the fake nodes, Kueue and the monitoring stack.
 
 ## Troubleshooting
 

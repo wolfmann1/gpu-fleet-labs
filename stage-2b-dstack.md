@@ -87,6 +87,8 @@ Install to its own drive. During install, enable OpenSSH server. Give the machin
 
 ### A2. NVIDIA driver
 
+Containers use the host's kernel driver, so the GPU node needs the NVIDIA driver before anything else. Ubuntu's `ubuntu-drivers` tool detects the card and installs the driver branch it recommends.
+
 **On the GPU node:**
 
 ```bash
@@ -98,7 +100,9 @@ sudo reboot
 
 If Secure Boot is on, the installer asks for a password to enrol a signing key; after reboot a blue MOK screen asks for it. Skipping that step leaves the driver unloaded.
 
-**Check — on the GPU node:**
+After the reboot, check that the driver loaded and can see the card.
+
+**On the GPU node:**
 
 ```bash
 nvidia-smi
@@ -122,7 +126,9 @@ Follow [prerequisites §1.1](00-prerequisites.md#11-docker-engine-from-dockers-r
 
 Follow [prerequisites §1.2](00-prerequisites.md#12-nvidia-container-toolkit). Order matters: Docker first, then the toolkit, because the toolkit's last step (`nvidia-ctk runtime configure --runtime=docker`) writes an `nvidia` runtime into Docker's `/etc/docker/daemon.json`.
 
-**Check — on the GPU node:**
+Check that a container started with `--gpus all` can reach the GPU. This command runs `nvidia-smi` inside a small CUDA base image.
+
+**On the GPU node:**
 
 ```bash
 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi
@@ -139,6 +145,8 @@ The same table as on the host, printed from inside a container, proves the toolk
 | `AllowTcpForwarding yes` in `/etc/ssh/sshd_config` | The server and CLI reach the runner and your dev environments through SSH tunnels |
 | Key-based SSH from the laptop | The server logs in unattended |
 
+Start with the sudo and SSH settings on the node itself.
+
 **On the GPU node:**
 
 ```bash
@@ -146,6 +154,10 @@ echo "chris ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/chris-nopasswd
 sudo grep -n AllowTcpForwarding /etc/ssh/sshd_config   # set to yes if present and "no"
 sudo systemctl restart ssh
 ```
+
+The first line adds a sudoers entry that lets `chris` run any command without a password. If `grep` finds `AllowTcpForwarding no`, change it to `yes` in the file before the restart; if it finds nothing, the default already allows forwarding.
+
+Next, give the laptop key-based access to the node and confirm passwordless sudo works over SSH.
 
 **On the laptop (WSL2):**
 
@@ -155,6 +167,8 @@ ssh-copy-id chris@192.168.1.50
 ssh chris@192.168.1.50 'sudo -n true && echo sudo ok'
 ```
 
+`ssh-copy-id` installs your public key on the node. The last command should print `sudo ok` with no password prompt; `sudo -n` fails instead of prompting, so any error means the sudoers entry is not in effect.
+
 Passwordless sudo is a lab convenience. On a shared fleet you'd scope it to the commands dstack needs.
 
 ---
@@ -163,7 +177,7 @@ Passwordless sudo is a lab convenience. On a shared fleet you'd scope it to the 
 
 The server needs Linux, so it runs in WSL2. The CLI also runs on native Windows, which matters for VS Code later.
 
-Install the base packages and dstack from [prerequisites §2.2–2.3](00-prerequisites.md#22-base-packages) (git and the OpenSSH client are server requirements; uv installs dstack in its own environment). Then:
+Install the base packages and dstack from [prerequisites §2.2–2.3](00-prerequisites.md#22-base-packages) (git and the OpenSSH client are server requirements; uv installs dstack in its own environment). Then start the server in a WSL2 terminal.
 
 **On the laptop (WSL2):**
 
@@ -173,7 +187,7 @@ dstack server
 
 The server prints its URL (`http://127.0.0.1:3000`) and an **admin token**. Open the URL in a Windows browser; WSL2 forwards localhost. Leave the server running in its own terminal.
 
-In a second WSL2 terminal, point the CLI at it:
+In a second WSL2 terminal, point the CLI at the server. Replace `<admin-token>` with the token the server printed.
 
 **On the laptop (WSL2):**
 
@@ -187,7 +201,7 @@ dstack project add --name main --url http://127.0.0.1:3000 --token <admin-token>
 
 ## Part C — The GPU node as an SSH fleet
 
-Create the lab repo on the laptop and copy in the shared scripts:
+Create the lab repo on the laptop and copy in the shared scripts.
 
 **On the laptop (WSL2):**
 
@@ -196,9 +210,11 @@ mkdir -p ~/gpu-fleet-lab/dstack && cd ~/gpu-fleet-lab/dstack
 cp /path/to/labs/code/train_ddp.py /path/to/labs/code/preflight.py .
 ```
 
-`home-fleet.dstack.yml`:
+You are now in `~/gpu-fleet-lab/dstack` with `train_ddp.py` and `preflight.py` beside you. Every YAML file in this lab goes in this directory.
 
-**File on the laptop (WSL2):**
+Describe the GPU node as an SSH fleet. The file names the host, the user and key the server logs in with, and how to divide the machine into slots.
+
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/home-fleet.dstack.yml`
 
 ```yaml
 type: fleet
@@ -210,6 +226,10 @@ ssh_config:
     - 192.168.1.50
 blocks: auto   # one block per GPU: 1 now, 2 once the second 3070 is in
 ```
+
+The server reads `identity_file` from the laptop, so it must be the same key you copied to the node in A5.
+
+Submit the fleet configuration to the server, then list fleets to see the result.
 
 **On the laptop (WSL2):**
 
@@ -230,9 +250,9 @@ All `dstack` commands in this part run **on the laptop (WSL2)**, from `~/gpu-fle
 
 ### D1. A dev environment
 
-`dev.dstack.yml`:
+A dev environment is an interactive container with a GPU that you connect to from an IDE. Define one with a single GPU and the PyTorch image used throughout these labs.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/dev.dstack.yml`
 
 ```yaml
 type: dev-environment
@@ -243,6 +263,10 @@ inactivity_duration: 1h
 resources:
   gpu: 1
 ```
+
+The image is built for CUDA 12.8, so the node needs driver 570 or later (A2).
+
+Submit the configuration to start the environment on the GPU node.
 
 **On the laptop (WSL2):**
 
@@ -260,11 +284,19 @@ Stop it with `dstack stop dev`.
 
 ### D2. A training task with checkpoints
 
-The checkpoint needs to survive the container, so mount a host directory into it. On the GPU node: `sudo mkdir -p /opt/lab-ckpt && sudo chown chris /opt/lab-ckpt`.
+The checkpoint needs to survive the container, so it goes in a directory on the GPU node that the task mounts. Create the directory and give your user ownership of it.
 
-`train.dstack.yml`:
+**On the GPU node:**
 
-**File on the laptop (WSL2):**
+```bash
+sudo mkdir -p /opt/lab-ckpt && sudo chown chris /opt/lab-ckpt
+```
+
+Files written to `/opt/lab-ckpt` stay on the node after the container exits.
+
+Define a task that trains on one GPU, mounts `/opt/lab-ckpt` at `/ckpt`, and writes a checkpoint every 200 steps.
+
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/train.dstack.yml`
 
 ```yaml
 type: task
@@ -281,6 +313,10 @@ resources:
   gpu: 1
   shm_size: 8GB
 ```
+
+`files` copies `train_ddp.py` from the laptop into the container. `$DSTACK_GPUS_PER_NODE` is set by dstack to the number of GPUs the run received, so `torchrun` starts one process per GPU.
+
+Submit the task and follow its log.
 
 **On the laptop (WSL2):**
 
@@ -304,9 +340,9 @@ Run two copies of the task at once (`name: train-a`, `name: train-b`, separate `
 
 ### D4. Priorities without preemption
 
-Occupy the whole node with a long 2-GPU run (or a 1-GPU run before the second card arrives). Then submit three short single-GPU tasks with different priorities, each allowed to wait:
+Occupy the whole node with a long 2-GPU run (or a 1-GPU run before the second card arrives). Then submit three short single-GPU tasks with different priorities, each allowed to wait.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/low.dstack.yml`
 
 ```yaml
 type: task
@@ -324,7 +360,7 @@ resources:
   gpu: 1
 ```
 
-Submit `low` first, then `mid`, then `high`. Watch `dstack ps`.
+Save copies as `mid.dstack.yml` and `high.dstack.yml`, changing `name` and `priority` in each. The `retry` block lets a run wait up to two hours for a free GPU instead of failing with no capacity. Submit `low` first, then `mid`, then `high`. Watch `dstack ps`.
 
 **What to notice:**
 
@@ -336,9 +372,9 @@ In a shared research fleet, (1) means an urgent paper-deadline job waits behind 
 
 ### D5. Utilization policy
 
-dstack can stop runs that hold GPUs without using them:
+dstack can stop runs that hold GPUs without using them. This task is deliberately starved of data, and its `utilization_policy` stops it if GPU utilization stays below 30% for 10 minutes.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/starved.dstack.yml`
 
 ```yaml
 type: task
@@ -366,9 +402,9 @@ Then fix the job: raise `--workers` to 8 and watch utilization climb. That's the
 
 Needs the AWS account, GPU quota and sign-in from [prerequisites §3](00-prerequisites.md#3-aws-account). Before starting, on the laptop (WSL2), confirm with `aws sts get-caller-identity` (run `aws sso login` first if the session has expired).
 
-Stop the server, then edit `~/.dstack/server/config.yml`:
+Stop the server, then add AWS as a backend in the server's configuration file.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/.dstack/server/config.yml`
 
 ```yaml
 projects:
@@ -380,9 +416,11 @@ projects:
         regions: [us-east-2]   # the region the labs use
 ```
 
-Restart `dstack server` in its WSL2 terminal. Create a backend fleet that is empty until needed:
+Restart `dstack server` in its WSL2 terminal so it loads the backend. The server now uses the credentials you signed in with to create instances in us-east-2.
 
-**File on the laptop (WSL2):**
+Create a backend fleet that is empty until needed.
+
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/aws-lab.dstack.yml`
 
 ```yaml
 type: fleet
@@ -394,7 +432,18 @@ resources:
 idle_duration: 10m    # terminate the instance 10 minutes after the last job ends
 ```
 
-Run the `train` task with `fleets: [aws-lab]` added (and remove the `volumes` entry; that host path exists only at home). dstack's plan output lists offers with prices; the cheapest single-GPU G instance is usually chosen.
+With `nodes: 0..1` the fleet holds no instance, and costs nothing, until a run is placed on it.
+
+To run the training task on AWS, copy `train.dstack.yml` to `train-aws.dstack.yml` and edit the copy: change `name` to `train-aws`, add the line `fleets: [aws-lab]`, and delete the `volumes` entry, since that host path exists only on the GPU node. Then register the fleet and submit the task.
+
+**On the laptop (WSL2):**
+
+```bash
+dstack apply -f aws-lab.dstack.yml
+dstack apply -f train-aws.dstack.yml
+```
+
+The first command creates the empty fleet. The second shows a plan listing matching offers with their prices before it asks for confirmation; the cheapest single-GPU G instance is usually chosen. dstack then launches the instance, pulls the image and starts the task.
 
 **What to notice:**
 
@@ -421,6 +470,8 @@ Answer in `gpu-fleet-lab/notes/dstack.md`:
 5. What did you like about dstack as a researcher? Be specific; the people who chose it will want to hear it.
 
 ## Clean up
+
+Stop any runs still active and remove the home fleet from the server.
 
 **On the laptop (WSL2):**
 

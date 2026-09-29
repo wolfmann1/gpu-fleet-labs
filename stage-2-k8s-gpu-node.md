@@ -96,7 +96,9 @@ sudo grep -n nvidia /var/lib/rancher/k3s/agent/etc/containerd/config.toml
 
 k3s uses its own containerd, separate from the Docker you installed in stage 2B. Both can coexist; dstack's SSH fleet uses Docker, Kubernetes uses k3s's containerd.
 
-**Drive it from the laptop (WSL2):**
+Copy the kubeconfig k3s wrote to the laptop and replace its loopback address with the node's LAN address. From then on, kubectl and Helm on the laptop drive the cluster.
+
+**On the laptop (WSL2):**
 
 ```bash
 scp chris@192.168.1.50:/etc/rancher/k3s/k3s.yaml ~/.kube/home.yaml
@@ -109,7 +111,7 @@ kubectl and Helm come from [prerequisites §2.4–2.5](00-prerequisites.md#24-ku
 
 ### B2. Prometheus and Grafana first
 
-The GPU Operator will create a ServiceMonitor for the DCGM exporter, and that object type only exists once kube-prometheus-stack is installed.
+Install kube-prometheus-stack before the GPU Operator. The operator will create a ServiceMonitor for the DCGM exporter, and that object type only exists once kube-prometheus-stack is installed.
 
 **On the laptop (WSL2):**
 
@@ -119,9 +121,11 @@ helm install kps prometheus-community/kube-prometheus-stack -n monitoring --crea
     --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
 ```
 
-(Stage 1 explains the `--set`.)
+Helm installs Prometheus, Grafana and the Prometheus Operator into the `monitoring` namespace. The `--set` lets Prometheus pick up ServiceMonitors from other Helm releases, including the GPU Operator's; stage 1 explains it in full.
 
 ### B3. GPU Operator
+
+Install the GPU Operator with Helm, using the driver and toolkit already on the host. `--wait` holds the command until the operator's pods are ready.
 
 **On the laptop (WSL2):**
 
@@ -136,13 +140,17 @@ helm install gpu-operator nvidia/gpu-operator -n gpu-operator --create-namespace
 kubectl -n gpu-operator get pods
 ```
 
+The final command lists the pods the operator created: device plugin, GFD, DCGM exporter and validators. The table gives the reason for each flag.
+
 | Flag | Reason |
 |---|---|
 | `driver.enabled=false` | Host driver already installed |
 | `toolkit.enabled=false` | Host toolkit already installed and k3s already uses it |
 | `dcgmExporter.serviceMonitor.enabled=true` | Prometheus scrapes GPU metrics automatically |
 
-**Check, in order — on the laptop (WSL2):**
+Check the result in order: the operator's pods, then the GPU count the node advertises, then the labels GFD added to the node.
+
+**On the laptop (WSL2):**
 
 ```bash
 kubectl -n gpu-operator get pods                      # validator pods Completed, the rest Running
@@ -152,7 +160,9 @@ kubectl get node gpu-node --show-labels | tr ',' '\n' | grep nvidia.com
 
 The labels from GFD include `nvidia.com/gpu.product=NVIDIA-GeForce-RTX-3070`, `nvidia.com/gpu.memory`, `nvidia.com/gpu.count` and the driver version. On a mixed fleet those labels are how you target GPU types, and Kueue flavors use them.
 
-**First GPU pod — on the laptop (WSL2):**
+Run a first GPU pod that requests one GPU and runs `nvidia-smi`. `--rm` deletes the pod when the command exits.
+
+**On the laptop (WSL2):**
 
 ```bash
 kubectl run smi --rm -it --restart=Never --image=nvidia/cuda:12.8.1-base-ubuntu24.04 \
@@ -163,6 +173,8 @@ The pod sees exactly one GPU. Run it with `"nvidia.com/gpu":2` and it sees both.
 
 ### B4. DCGM dashboard
 
+Print Grafana's admin password from its secret, then forward Grafana's port to the laptop. The port-forward runs in the foreground, so leave that terminal open and browse to `http://localhost:3001`.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -170,7 +182,7 @@ kubectl -n monitoring get secret kps-grafana -o jsonpath='{.data.admin-password}
 kubectl -n monitoring port-forward svc/kps-grafana 3001:80
 ```
 
-In Grafana: Dashboards → New → Import → ID **12239** (NVIDIA DCGM Exporter Dashboard) → select the Prometheus data source.
+Sign in as `admin` with the printed password. In Grafana: Dashboards → New → Import → ID **12239** (NVIDIA DCGM Exporter Dashboard) → select the Prometheus data source.
 
 Useful raw metrics for your own panels:
 
@@ -188,9 +200,9 @@ The last row is the one you'd use on the p5 fleet to tell busy from productive. 
 
 ### B5. Kueue for two teams on two GPUs
 
-Install Kueue as in [stage 1 B6](stage-1-kueue-simulated-fleet.md#b6-kueue) (Helm plus `prometheus.yaml`). Then a smaller version of the same design, with one flavor matching the GFD label:
+Install Kueue as in [stage 1 B6](stage-1-kueue-simulated-fleet.md#b6-kueue) (Helm plus `prometheus.yaml`). Then write a smaller version of the same design, with one flavor matching the GFD label.
 
-**File on the laptop (WSL2):**
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/k8s/kueue-home.yaml`
 
 ```yaml
 apiVersion: kueue.x-k8s.io/v1beta2
@@ -219,11 +231,21 @@ spec:
 # team-b: identical, with name team-b
 ```
 
-Add the `team-b` ClusterQueue, namespaces `team-a` and `team-b`, a LocalQueue named `research` in each, and the `batch` and `deadline` WorkloadPriorityClasses from stage 1.
+Add the `team-b` ClusterQueue, namespaces `team-a` and `team-b`, a LocalQueue named `research` in each, and the `batch` and `deadline` WorkloadPriorityClasses from stage 1. Keep the namespaces above the LocalQueues in the file, because `kubectl apply` creates objects in order and a LocalQueue needs its namespace to exist. Then apply the file.
+
+**On the laptop (WSL2):**
+
+```bash
+cd ~/gpu-fleet-lab/k8s
+kubectl apply -f kueue-home.yaml
+kubectl get clusterqueues,localqueues -A
+```
+
+Both ClusterQueues and both LocalQueues should be listed. A ClusterQueue that reports itself inactive usually names a flavor that doesn't exist or doesn't match the node's GFD label.
 
 ### B6. Code and checkpoint storage
 
-Put the shared scripts in a ConfigMap and give each team a checkpoint volume. k3s ships a `local-path` storage class that creates volumes as directories on the node.
+Put the shared scripts in a ConfigMap and give each team a checkpoint volume. k3s ships a `local-path` storage class that creates volumes as directories on the node. The commands run from `~/gpu-fleet-lab/k8s` and expect the two scripts from this repository's `code/` folder copied into `~/gpu-fleet-lab/k8s/code/`.
 
 **On the laptop (WSL2):**
 
@@ -242,9 +264,11 @@ EOF
   done
 ```
 
-A training Job template, `train-job.yaml`:
+Each team namespace now has a `lab-code` ConfigMap holding the two scripts and a 5 GiB `ckpt` claim; the claim's YAML is applied inline, so no file is saved. `kubectl get pvc -A` shows the claims as `Pending` until a pod mounts them, at which point `local-path` creates the directory.
 
-**File on the laptop (WSL2):**
+Save a training Job template for the exercises. It runs `train_ddp.py` on one GPU, submits to the `research` LocalQueue at `batch` priority, and mounts the code, the checkpoint claim and a RAM-backed `/dev/shm`.
+
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/k8s/train-job.yaml`
 
 ```yaml
 apiVersion: batch/v1
@@ -292,6 +316,8 @@ The first run pulls the multi-gigabyte PyTorch image; later runs start quickly b
 
 ### E1. Quotas and borrowing on real GPUs
 
+From `~/gpu-fleet-lab/k8s`, submit two copies of the training Job to team-a. The `sed` renames the second copy so both can exist, and `kubectl get workloads` shows how Kueue admitted them.
+
 **On the laptop (WSL2):**
 
 ```bash
@@ -325,19 +351,21 @@ Then measure scaling:
 
 Efficiency below 100% is the cost of the all-reduce. Try `--batch-size 32` and `256`: with small batches the GPUs compute briefly and spend proportionally more time communicating, so efficiency drops. That relationship (compute per step vs. communication per step) is why interconnect bandwidth matters so much on the p5 fleet.
 
-Also run the preflight check with the same shape. **On the laptop (WSL2)**, copy `train-job.yaml` to `preflight-job.yaml`, change `metadata.name` to `preflight`, request 2 GPUs, and set the command to:
+Also run the preflight check with the same shape. Copy `train-job.yaml` to `preflight-job.yaml`, change `metadata.name` to `preflight` and request 2 GPUs. The snippet below replaces the container's `command` line in the new file.
+
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/k8s/preflight-job.yaml`
 
 ```yaml
         command: ["torchrun", "--nproc-per-node=2", "/code/preflight.py"]
 ```
 
-then `kubectl -n team-a create -f preflight-job.yaml` and read its log with `kubectl -n team-a logs job/preflight`.
+Submit the Job from the laptop with `kubectl -n team-a create -f preflight-job.yaml` and read its log with `kubectl -n team-a logs job/preflight`.
 
 It prints the all-reduce bus bandwidth. Note the figure: a few GB/s through host memory. An 8-GPU H100 node measures in the hundreds of GB/s.
 
 ### E3. Crash and resume
 
-Start the 1-GPU training job. After a couple of checkpoints, delete its pod:
+Start the 1-GPU training job. After a couple of checkpoints, delete its pod and watch the Job controller replace it.
 
 **On the laptop (WSL2):**
 
@@ -352,15 +380,17 @@ For multi-pod jobs, Kubernetes' `podFailurePolicy` lets you distinguish a node f
 
 ### E4. A hung rank
 
-Start the 2-GPU job with a short NCCL timeout: add `"--nccl-timeout-s", "90"` to the command. Once it's logging steps:
+Start the 2-GPU job with a short NCCL timeout: add `"--nccl-timeout-s", "90"` to the command. Once it's logging steps, open a shell inside the training pod. The pod runs on the GPU node, and `kubectl exec` connects you to it from the laptop.
 
-**On the laptop (WSL2):** open a shell inside the training pod (it runs on the GPU node; `kubectl exec` connects you to it).
+**On the laptop (WSL2):**
 
 ```bash
 kubectl -n team-a exec -it <pod> -- bash
 ```
 
-**Inside the pod** (the prompt changes to `root@<pod-name>`):
+The prompt changes to `root@<pod-name>`, which means you are inside the pod. Find the two worker processes and freeze one of them.
+
+**Inside the pod:**
 
 ```bash
 ps -ef | grep train_ddp       # two worker processes, one per GPU (plus torchrun itself)
@@ -383,7 +413,7 @@ Resume the process (`kill -CONT`) before the timeout on a second run to see the 
 
 ### E5. Time-slicing
 
-Advertise each GPU as four:
+Advertise each GPU as four by giving the device plugin a time-slicing config and pointing the GPU Operator's cluster policy at it. The ConfigMap is applied inline, so no file is saved.
 
 **On the laptop (WSL2):**
 
@@ -425,6 +455,8 @@ Run the 2-GPU job for an hour with a batch size that nearly fills memory. Watch 
 **What to notice:** gaming loads vary; training holds the card at its power limit continuously. If the top card (with the second card blowing into it) shows falling SM clocks as temperature rises, that's thermal throttling, and the job's throughput will drift down with it. Screenshot the panels: this is your "healthy baseline" for comparing future runs, which is exactly what a fleet operator keeps per node type.
 
 ### E7. Take the node out of service
+
+Cordon the node, submit a Job, and look at its pod before uncordoning.
 
 **On the laptop (WSL2):**
 
@@ -476,7 +508,15 @@ In `gpu-fleet-lab/notes/k8s-gpu.md`:
 
 ## Clean up
 
-k3s can stay for later stages. To remove it completely, on the GPU node: `sudo /usr/local/bin/k3s-uninstall.sh`. Docker and the NVIDIA toolkit are unaffected.
+k3s can stay for later stages. When you want it gone, run the uninstall script the k3s installer left behind.
+
+**On the GPU node:**
+
+```bash
+sudo /usr/local/bin/k3s-uninstall.sh
+```
+
+The script removes k3s, its containerd and all cluster data. Docker and the NVIDIA toolkit are unaffected, so dstack and the Slurm extension keep working.
 
 ## Troubleshooting
 
