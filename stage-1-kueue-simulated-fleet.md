@@ -229,19 +229,24 @@ kubectl -n kueue-system get configmap kueue-manager-config \
 grep -n "waitForPodsReady" kueue-config.yaml
 ```
 
-`kueue-config.yaml` now holds the controller configuration with no ConfigMap wrapping, so its top-level keys (`apiVersion`, `kind`, `health`, `controller`, …) start at the left margin. The `grep` shows the line number of the commented-out `#waitForPodsReady:` block that ships with Kueue.
+`kueue-config.yaml` now holds the controller configuration with no ConfigMap wrapping, so its top-level keys (`apiVersion`, `kind`, `controller`, `integrations`, …) start at the left margin. With the Helm install used here, `grep` prints nothing: the chart parses the configuration and writes it back out, which drops the comments, so there is no `waitForPodsReady` block yet. If you installed Kueue from the release manifest instead, `grep` shows a commented-out `#waitForPodsReady:` block; delete that block and its indented `#` lines in an editor before the next step.
 
-Open the file in an editor, delete the commented `#waitForPodsReady:` block (the `#waitForPodsReady:` line and the `#`-prefixed lines indented under it), and in its place type or paste the three lines below. `waitForPodsReady:` starts at the left margin like the other top-level keys; the two lines under it are indented by exactly two spaces.
+Append the setting to the end of the file. The command writes the three lines exactly as shown, so indentation doesn't depend on an editor: `waitForPodsReady:` lands at the left margin as a top-level key, and the two lines under it are indented by two spaces.
 
-**File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/kueue-config.yaml` (lines to add)
+**On the laptop (WSL2):**
 
-```yaml
+```bash
+cat >> kueue-config.yaml <<'EOF'
 waitForPodsReady:
   timeout: 5m
   blockAdmission: true
+EOF
+tail -4 kueue-config.yaml
 ```
 
-Save the file (in nano, Ctrl+O then Enter, then Ctrl+X). Before loading it, check it's valid YAML and that the new block sits where you expect.
+`tail` shows the last lines of the file, ending with the new block. Paste the whole block at once, as with any here-document: the shell keeps reading until the line that contains only `EOF`. Run the append once. If you run it twice by mistake, rerun the extract step above to start again from a clean copy.
+
+Before loading the file, check it's valid YAML and that the new block sits where you expect.
 
 **On the laptop (WSL2):**
 
