@@ -133,7 +133,7 @@ Now a simulated training job runs until something stops it, which is closer to a
 
 ### B4. The fake fleet
 
-`make-fleet.sh` generates the reference fleet's shape: 32 eight-GPU nodes and 4 single-GPU nodes.
+`make-fleet.sh` generates the reference fleet's shape: 32 eight-GPU nodes and 4 single-GPU nodes. Create the file in your working folder with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/make-fleet.sh`
 
@@ -281,7 +281,7 @@ The second command returns once the new controller pod is running with the updat
 
 ### B7. Flavors, queues and teams
 
-`kueue-setup.yaml` defines the two flavors, the three ClusterQueues, the team namespaces with their LocalQueues, and two priority classes.
+`kueue-setup.yaml` defines the two flavors, the three ClusterQueues, the team namespaces with their LocalQueues, and two priority classes. Create the file in your working folder with the contents below; B7's apply step reads it from there.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/kueue-setup.yaml`
 
@@ -433,7 +433,7 @@ Read the ClusterQueue spec before moving on. Every design decision about sharing
 
 ### B8. A job template
 
-`job.sh` submits a simulated training job to a Kueue queue.
+`job.sh` submits a simulated training job to a Kueue queue. Create the file in your working folder with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/job.sh`
 
@@ -467,6 +467,17 @@ EOF
 ```
 
 Each pod asks for a whole p5 node. A 4-node job is a 32-GPU training run.
+
+A new file isn't executable, so mark the script as a program before the exercises call it as `./job.sh`.
+
+**On the laptop (WSL2):**
+
+```bash
+chmod +x job.sh
+ls -l job.sh
+```
+
+The permissions in the `ls` output now include `x`, as in `-rwxr-xr-x`. Without this step, `./job.sh` fails with `Permission denied`.
 
 ---
 
@@ -519,7 +530,7 @@ Now compare with plain Kubernetes, which has no gang admission. Kueue ignores Jo
 1. `cp job.sh raw-job.sh` and delete the `labels:` block (the two `kueue.x-k8s.io` lines and the `labels:` key).
 2. Kueue won't inject the flavor's node selector and toleration either, so add these lines under the pod `spec:`, beside `restartPolicy`.
 
-   **File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/raw-job.sh`
+   **File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/raw-job.sh` (lines to add)
 
    ```yaml
          nodeSelector: {instance-type: p5.48xlarge}

@@ -93,7 +93,7 @@ echo "$BUCKET"
 
 Bucket names are global across all AWS accounts, so the account ID in the name keeps it unique. The last line prints the name; put it in place of `<your-tf-state-bucket>` in `versions.tf` below. The bucket stays when you run `terraform destroy`, which is what you want: it holds the state that `destroy` reads.
 
-`versions.tf` pins the Terraform and AWS provider versions and configures the S3 backend.
+`versions.tf` pins the Terraform and AWS provider versions and configures the S3 backend. Create it in `~/gpu-fleet-lab/eks` with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/versions.tf`
 
@@ -128,7 +128,7 @@ variable "experiment" { default = "session-1" }
 
 ### B2. Network
 
-`network.tf` builds the VPC across two Availability Zones in us-east-2, with private subnets for the nodes and public subnets for the NAT gateway.
+`network.tf` builds the VPC across two Availability Zones in us-east-2, with private subnets for the nodes and public subnets for the NAT gateway. Create it with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/network.tf`
 
@@ -153,7 +153,7 @@ Nodes live in private subnets and reach the internet (image pulls, pip) through 
 
 ### B3. Cluster and node groups
 
-Check which Kubernetes versions EKS offers (`aws eks describe-cluster-versions --region us-east-2`) and use the newest standard-support one. `eks.tf` defines the cluster, its add-ons and two managed node groups.
+Check which Kubernetes versions EKS offers (`aws eks describe-cluster-versions --region us-east-2`) and use the newest standard-support one. `eks.tf` defines the cluster, its add-ons and two managed node groups. Create it with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/eks.tf`
 
@@ -284,7 +284,7 @@ Both ClusterQueues and both LocalQueues should be listed against the EKS cluster
 
 ### E1. A two-node training job
 
-This manifest defines a headless Service and an Indexed Job that runs one training rank on each GPU node. It runs in namespace `team-a`; create the `lab-code` ConfigMap there first, as in stage 2 B6.
+This manifest defines a headless Service and an Indexed Job that runs one training rank on each GPU node. It runs in namespace `team-a`; create the `lab-code` ConfigMap there first, as in stage 2 B6. Create `ddp.yaml` with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/ddp.yaml`
 
@@ -373,7 +373,7 @@ Question to answer: with a Capacity Block, "replace the node" means getting a he
 
 ### E3. S3 through Pod Identity
 
-`storage.tf` creates an S3 bucket, an IAM role that only the EKS Pod Identity service can assume, and an association that ties the role to the `trainer` service account in `team-a`.
+`storage.tf` creates an S3 bucket, an IAM role that only the EKS Pod Identity service can assume, and an association that ties the role to the `trainer` service account in `team-a`. Create it with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/storage.tf`
 
@@ -442,7 +442,7 @@ kubectl -n team-a run s3test2 --rm -it --restart=Never --image=amazon/aws-cli --
 
 ### E4. Optional — FSx for Lustre as shared checkpoint storage
 
-FSx for Lustre is what gives every node in a training job the same fast file system. Create it for one session only.
+FSx for Lustre is what gives every node in a training job the same fast file system. Create it for one session only. Save the Terraform below as `fsx.tf`.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/fsx.tf`
 

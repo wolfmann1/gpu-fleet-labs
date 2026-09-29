@@ -215,7 +215,7 @@ cp "$LABS"/code/train_ddp.py "$LABS"/code/preflight.py .
 
 You are now in `~/gpu-fleet-lab/dstack` with `train_ddp.py` and `preflight.py` beside you. Every YAML file in this lab goes in this directory.
 
-Describe the GPU node as an SSH fleet. The file names the host, the user and key the server logs in with, and how to divide the machine into slots.
+Describe the GPU node as an SSH fleet. The file names the host, the user and key the server logs in with, and how to divide the machine into slots. Create it in `~/gpu-fleet-lab/dstack` with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/home-fleet.dstack.yml`
 
@@ -253,7 +253,7 @@ All `dstack` commands in this part run **on the laptop (WSL2)**, from `~/gpu-fle
 
 ### D1. A dev environment
 
-A dev environment is an interactive container with a GPU that you connect to from an IDE. Define one with a single GPU and the PyTorch image used throughout these labs.
+A dev environment is an interactive container with a GPU that you connect to from an IDE. Define one with a single GPU and the PyTorch image used throughout these labs. Create the file with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/dev.dstack.yml`
 
@@ -297,7 +297,7 @@ sudo mkdir -p /opt/lab-ckpt && sudo chown chris /opt/lab-ckpt
 
 Files written to `/opt/lab-ckpt` stay on the node after the container exits.
 
-Define a task that trains on one GPU, mounts `/opt/lab-ckpt` at `/ckpt`, and writes a checkpoint every 200 steps.
+Define a task that trains on one GPU, mounts `/opt/lab-ckpt` at `/ckpt`, and writes a checkpoint every 200 steps. Create the file with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/train.dstack.yml`
 
@@ -343,7 +343,7 @@ Run two copies of the task at once (`name: train-a`, `name: train-b`, separate `
 
 ### D4. Priorities without preemption
 
-Occupy the whole node with a long 2-GPU run (or a 1-GPU run before the second card arrives). Then submit three short single-GPU tasks with different priorities, each allowed to wait.
+Occupy the whole node with a long 2-GPU run (or a 1-GPU run before the second card arrives). Then submit three short single-GPU tasks with different priorities, each allowed to wait. Create `low.dstack.yml` with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/low.dstack.yml`
 
@@ -375,7 +375,7 @@ In a shared research fleet, (1) means an urgent paper-deadline job waits behind 
 
 ### D5. Utilization policy
 
-dstack can stop runs that hold GPUs without using them. This task is deliberately starved of data, and its `utilization_policy` stops it if GPU utilization stays below 30% for 10 minutes.
+dstack can stop runs that hold GPUs without using them. This task is deliberately starved of data, and its `utilization_policy` stops it if GPU utilization stays below 30% for 10 minutes. Create the file with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/starved.dstack.yml`
 
@@ -405,7 +405,7 @@ Then fix the job: raise `--workers` to 8 and watch utilization climb. That's the
 
 Needs the AWS account, GPU quota and sign-in from [prerequisites §3](00-prerequisites.md#3-aws-account). Before starting, on the laptop (WSL2), confirm with `aws sts get-caller-identity` (run `aws sso login` first if the session has expired).
 
-Stop the server, then add AWS as a backend in the server's configuration file.
+Stop the server, then add AWS as a backend in the server's configuration file. The server creates this file on its first start; open it with `nano ~/.dstack/server/config.yml` and replace its contents with the block below, or create it if it's missing.
 
 **File on the laptop (WSL2):** `~/.dstack/server/config.yml`
 
@@ -421,7 +421,7 @@ projects:
 
 Restart `dstack server` in its WSL2 terminal so it loads the backend. The server now uses the credentials you signed in with to create instances in us-east-2.
 
-Create a backend fleet that is empty until needed.
+Create a backend fleet that is empty until needed. Create the file with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/dstack/aws-lab.dstack.yml`
 

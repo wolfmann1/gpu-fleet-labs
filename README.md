@@ -89,7 +89,7 @@ Both run anywhere PyTorch with CUDA is available, from one GPU up to several nod
 | `chris` | Your Linux user on the GPU node |
 | **On the GPU node:** | The command block below runs on the Ubuntu box with the RTX 3070s (console or `ssh chris@192.168.1.50`) |
 | **On the laptop (WSL2):** | The command block below runs in the Ubuntu terminal inside WSL2 on your laptop |
-| **File on …** | The block below is the contents of a file to create on that machine |
+| **File on …** `path` | Create the file at that path, on that machine, with exactly the block's contents: open it in an editor (`nano path`, or `sudo nano path` under `/etc`), paste the whole block, and save. A note in brackets after the path, such as *(lines to add)*, means the block is part of a file, and the text above it says where it goes |
 | Inside the pod | Commands run in a shell opened with `kubectl exec` |
 
 Code blocks contain no shell prompts, so they can be pasted as they are. Each lab also opens with a short "Where things run" section.

@@ -68,7 +68,7 @@ Copy the `CPUs=`, `Boards=`, `SocketsPerBoard=`, `CoresPerSocket=`, `ThreadsPerC
 
 ### B2. Configuration
 
-Tell Slurm which device files hold the GPUs. This file names the node, the resource type and the two NVIDIA devices.
+Tell Slurm which device files hold the GPUs. This file names the node, the resource type and the two NVIDIA devices. Create the file with the contents below; it's under `/etc`, so open it with `sudo nano /etc/slurm/gres.conf`.
 
 **File on the GPU node:** `/etc/slurm/gres.conf`
 
@@ -78,7 +78,7 @@ NodeName=gpu-node Name=gpu Type=rtx3070 File=/dev/nvidia[0-1]
 
 `slurmd` reads this file at startup and maps each `gpu:rtx3070` unit to one device file. (With one card: `File=/dev/nvidia0`, and `gpu:rtx3070:1` below.)
 
-The main configuration defines the cluster, the scheduler, the node and two partitions. Replace the node's hardware values with the ones you copied from `slurmd -C`.
+The main configuration defines the cluster, the scheduler, the node and two partitions. Replace the node's hardware values with the ones you copied from `slurmd -C`. The package doesn't install one, so create it with the contents below using `sudo nano /etc/slurm/slurm.conf`.
 
 **File on the GPU node:** `/etc/slurm/slurm.conf`
 
@@ -157,7 +157,7 @@ mkdir -p ~/lab && cp train_ddp.py preflight.py ~/lab/     # copy the scripts ove
 
 `~/venv` now holds PyTorch, and `~/lab` holds `train_ddp.py` and `preflight.py`.
 
-The batch script requests one GPU, four CPUs, 12 GB of memory and a 30-minute limit, then runs the training script under `torchrun`.
+The batch script requests one GPU, four CPUs, 12 GB of memory and a 30-minute limit, then runs the training script under `torchrun`. Create it in `~/lab` with the contents below.
 
 **File on the GPU node:** `~/lab/train.sbatch`
 

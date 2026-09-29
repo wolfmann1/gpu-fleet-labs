@@ -214,7 +214,7 @@ The last row is the one you'd use on the p5 fleet to tell busy from productive. 
 
 ### B5. Kueue for two teams on two GPUs
 
-Install Kueue as in [stage 1 B6](stage-1-kueue-simulated-fleet.md#b6-kueue) (Helm plus `prometheus.yaml`). Then write a smaller version of the same design, with one flavor matching the GFD label.
+Install Kueue as in [stage 1 B6](stage-1-kueue-simulated-fleet.md#b6-kueue) (Helm plus `prometheus.yaml`). Then write a smaller version of the same design, with one flavor matching the GFD label. Create `kueue-home.yaml` in `~/gpu-fleet-lab/k8s` with the contents below, then add the objects listed after it.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/k8s/kueue-home.yaml`
 
@@ -280,7 +280,7 @@ EOF
 
 Each team namespace now has a `lab-code` ConfigMap holding the two scripts and a 5 GiB `ckpt` claim; the claim's YAML is applied inline, so no file is saved. `kubectl get pvc -A` shows the claims as `Pending` until a pod mounts them, at which point `local-path` creates the directory.
 
-Save a training Job template for the exercises. It runs `train_ddp.py` on one GPU, submits to the `research` LocalQueue at `batch` priority, and mounts the code, the checkpoint claim and a RAM-backed `/dev/shm`.
+Save a training Job template for the exercises. It runs `train_ddp.py` on one GPU, submits to the `research` LocalQueue at `batch` priority, and mounts the code, the checkpoint claim and a RAM-backed `/dev/shm`. Create it in `~/gpu-fleet-lab/k8s` with the contents below.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/k8s/train-job.yaml`
 
@@ -367,7 +367,7 @@ Efficiency below 100% is the cost of the all-reduce. Try `--batch-size 32` and `
 
 Also run the preflight check with the same shape. Copy `train-job.yaml` to `preflight-job.yaml`, change `metadata.name` to `preflight` and request 2 GPUs. The snippet below replaces the container's `command` line in the new file.
 
-**File on the laptop (WSL2):** `~/gpu-fleet-lab/k8s/preflight-job.yaml`
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/k8s/preflight-job.yaml` (replacement `command` line)
 
 ```yaml
         command: ["torchrun", "--nproc-per-node=2", "/code/preflight.py"]
