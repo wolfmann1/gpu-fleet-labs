@@ -1,0 +1,12 @@
+# Keep credentials and state out of the repo if lab work is done in this folder
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+kubeconfig*
+*.kubeconfig
+.env
+__pycache__/
+.vscode/
+.DS_Store
+Thumbs.db
