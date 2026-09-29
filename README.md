@@ -94,6 +94,20 @@ Both run anywhere PyTorch with CUDA is available, from one GPU up to several nod
 
 Code blocks contain no shell prompts, so they can be pasted as they are. Each lab also opens with a short "Where things run" section.
 
+## Working with YAML
+
+Most files in these labs are YAML, and YAML uses indentation to show structure. Three rules prevent nearly every error:
+
+| Rule | Why |
+|---|---|
+| Indent with spaces, never tabs | The YAML specification forbids tabs for indentation; a tab produces an error such as `found character that cannot start any token` |
+| Keep the indentation exactly as shown, two spaces per level | A key indented one space too far or too little becomes a child of the wrong parent, or a syntax error |
+| Paste whole blocks into a file rather than retyping them | Copying a block keeps its indentation intact |
+
+Editors can change indentation as you paste. In nano, it's safe by default. In vi or vim, run `:set paste` before pasting so auto-indent doesn't add spaces to every line. `kubectl edit` opens vi unless told otherwise; to use nano for the whole session, run `export KUBE_EDITOR=nano` (add it to `~/.bashrc` to keep it).
+
+To check a YAML file before using it, on the laptop (WSL2): `python3 -c "import yaml,sys; list(yaml.safe_load_all(open(sys.argv[1])))" file.yaml`. No output means the file parses; an error names the line and column to fix. For Kubernetes manifests, `kubectl apply --dry-run=server -f file.yaml` goes further and checks the objects against the cluster.
+
 Version numbers were current on 2026-09-28. Where a newer release exists, use it and read its release notes for renamed fields; Kueue in particular moved its API to `v1beta2` and renamed `cohort` to `cohortName`.
 
 Keep your notes, manifests and results in a `gpu-fleet-lab` working folder so the stage 4 documents can cite them.

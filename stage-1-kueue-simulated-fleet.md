@@ -206,15 +206,24 @@ kubectl -n kueue-system get pods
 
 The last command should show a `kueue-controller-manager-…` pod as Running before you continue.
 
-**All-or-nothing with ready pods.** Kueue admits a Job as a whole, but by default it considers the job started once admitted, even if some pods can't actually be scheduled (on a real cluster, a node might be missing or unhealthy). `waitForPodsReady` makes Kueue wait until every pod is Ready and evict and requeue the workload if that doesn't happen within a timeout. The setting lives in the controller's ConfigMap, which the next command opens in your editor.
+**All-or-nothing with ready pods.** Kueue admits a Job as a whole, but by default it considers the job started once admitted, even if some pods can't actually be scheduled (on a real cluster, a node might be missing or unhealthy). `waitForPodsReady` makes Kueue wait until every pod is Ready and evict and requeue the workload if that doesn't happen within a timeout. The setting lives in the controller's configuration, which is stored as a YAML document inside the `kueue-manager-config` ConfigMap, under the key `controller_manager_config.yaml`. Editing it in place with `kubectl edit` is error-prone: the document is nested inside the ConfigMap, so every line carries four extra spaces of indentation, and a single misaligned line makes the edit fail to save. Extracting the document to a file, editing that, and loading it back avoids the nesting.
+
+Extract the controller configuration to a file in your working folder.
 
 **On the laptop (WSL2):**
 
 ```bash
-kubectl -n kueue-system edit configmap kueue-manager-config
+cd ~/gpu-fleet-lab/kueue-sim
+kubectl -n kueue-system get configmap kueue-manager-config \
+    -o jsonpath='{.data.controller_manager_config\.yaml}' > kueue-config.yaml
+grep -n "waitForPodsReady" kueue-config.yaml
 ```
 
-The controller's configuration is a YAML document inside the ConfigMap's `data` field. Find the `waitForPodsReady` block (commented out or present) and replace it in the editor with the text below.
+`kueue-config.yaml` now holds the controller configuration with no ConfigMap wrapping, so its top-level keys (`apiVersion`, `kind`, `health`, `controller`, …) start at the left margin. The `grep` shows the line number of the commented-out `#waitForPodsReady:` block that ships with Kueue.
+
+Open the file in an editor, delete the commented `#waitForPodsReady:` block (the `#waitForPodsReady:` line and the `#`-prefixed lines indented under it), and in its place type or paste the three lines below. `waitForPodsReady:` starts at the left margin like the other top-level keys; the two lines under it are indented by exactly two spaces.
+
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/kueue-config.yaml` (lines to add)
 
 ```yaml
 waitForPodsReady:
@@ -222,7 +231,29 @@ waitForPodsReady:
   blockAdmission: true
 ```
 
-Save and close the editor. The controller reads its configuration only at start-up, so restart it.
+Save the file (in nano, Ctrl+O then Enter, then Ctrl+X). Before loading it, check it's valid YAML and that the new block sits where you expect.
+
+**On the laptop (WSL2):**
+
+```bash
+python3 -c "import yaml,sys; c=yaml.safe_load(open('kueue-config.yaml')); print(c['waitForPodsReady'])"
+```
+
+The command prints `{'timeout': '5m', 'blockAdmission': True}`. An error naming a line and column means the indentation is off at that line; a `KeyError` means `waitForPodsReady` isn't at the top level. If Python reports `No module named 'yaml'`, install it with `sudo apt install -y python3-yaml` and run the check again.
+
+Load the edited file back into the ConfigMap. `--dry-run=client -o yaml` builds the ConfigMap locally from the file, and `kubectl apply` replaces the one in the cluster.
+
+**On the laptop (WSL2):**
+
+```bash
+kubectl -n kueue-system create configmap kueue-manager-config \
+    --from-file=controller_manager_config.yaml=kueue-config.yaml \
+    --dry-run=client -o yaml | kubectl apply -f -
+```
+
+kubectl may warn that the ConfigMap is missing a `last-applied-configuration` annotation; that's expected for an object Helm created, and the change is applied. A later `helm upgrade` of Kueue would restore the chart's default configuration, so keep `kueue-config.yaml` to reapply.
+
+The controller reads its configuration only at start-up, so restart it.
 
 **On the laptop (WSL2):**
 
