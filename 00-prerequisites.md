@@ -176,7 +176,17 @@ Stage 1 runs Kubernetes nodes as Docker containers. Pick **one** of these, not b
 | Docker Desktop (Windows) with WSL integration | Install Docker Desktop, then Settings → Resources → WSL integration → enable your Ubuntu distribution | Simplest. `docker` inside WSL talks to Docker Desktop |
 | Docker Engine inside WSL2 | Run the commands from [§1.1](#11-docker-engine-from-dockers-repository) in the WSL2 terminal instead of on the GPU node | Needs systemd enabled in WSL (`/etc/wsl.conf`: `[boot]` `systemd=true`, then `wsl --shutdown` from PowerShell) |
 
-Don't install `docker.io` in WSL either.
+Don't install `docker.io` in WSL either, and don't combine the two options: Docker Desktop and a WSL-installed engine both claim `/var/run/docker.sock`.
+
+With Docker Desktop, your WSL user also needs to be in the `docker` group, which owns the socket; without it every `docker` command fails with `permission denied while trying to connect to the docker API`.
+
+**On the laptop (WSL2):**
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Then close the Ubuntu terminal, run `wsl --shutdown` in PowerShell, and open Ubuntu again so the new group membership applies.
 
 **Check, on the laptop (WSL2):** `docker run --rm hello-world`.
 
