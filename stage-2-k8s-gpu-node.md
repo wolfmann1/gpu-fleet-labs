@@ -101,13 +101,27 @@ Copy the kubeconfig k3s wrote to the laptop and replace its loopback address wit
 **On the laptop (WSL2):**
 
 ```bash
+mkdir -p ~/.kube
 scp chris@192.168.1.50:/etc/rancher/k3s/k3s.yaml ~/.kube/home.yaml
 sed -i 's/127.0.0.1/192.168.1.50/' ~/.kube/home.yaml
 export KUBECONFIG=~/.kube/home.yaml
 kubectl get nodes
 ```
 
-kubectl and Helm come from [prerequisites §2.4–2.5](00-prerequisites.md#24-kubectl) if stage 1 didn't already install them. kubectl v1.36 matches the k3s release the install script currently fetches; `kubectl version` shows both client and server versions, which should be within one minor version of each other.
+`export KUBECONFIG` applies to the current terminal only; run it again in any new terminal you use for this lab, or add it to `~/.bashrc`. kubectl and Helm come from [prerequisites §2.4–2.5](00-prerequisites.md#24-kubectl) if stage 1 didn't already install them. kubectl v1.36 matches the k3s release the install script currently fetches; `kubectl version` shows both client and server versions, which should be within one minor version of each other.
+
+Create the working folder for this lab and copy in the two shared scripts, which B6 loads into the cluster.
+
+**On the laptop (WSL2):**
+
+```bash
+LABS=/mnt/c/projects/learning/gpu-fleet-labs
+mkdir -p ~/gpu-fleet-lab/k8s/code && cd ~/gpu-fleet-lab/k8s
+cp "$LABS"/code/train_ddp.py "$LABS"/code/preflight.py code/
+ls code
+```
+
+`LABS` is the folder where you cloned this repository, seen from WSL2; Windows drives appear under `/mnt/`, so `C:\projects\learning\gpu-fleet-labs` is `/mnt/c/projects/learning/gpu-fleet-labs`. Change the path if your clone is elsewhere. `ls` should list both scripts. Run the rest of this lab's laptop commands from `~/gpu-fleet-lab/k8s`.
 
 ### B2. Prometheus and Grafana first
 
@@ -245,7 +259,7 @@ Both ClusterQueues and both LocalQueues should be listed. A ClusterQueue that re
 
 ### B6. Code and checkpoint storage
 
-Put the shared scripts in a ConfigMap and give each team a checkpoint volume. k3s ships a `local-path` storage class that creates volumes as directories on the node. The commands run from `~/gpu-fleet-lab/k8s` and expect the two scripts from this repository's `code/` folder copied into `~/gpu-fleet-lab/k8s/code/`.
+Put the shared scripts in a ConfigMap and give each team a checkpoint volume. k3s ships a `local-path` storage class that creates volumes as directories on the node. The commands run from `~/gpu-fleet-lab/k8s` and read the two scripts copied into `code/` in B1.
 
 **On the laptop (WSL2):**
 

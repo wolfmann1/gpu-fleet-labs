@@ -82,6 +82,16 @@ From [prerequisites §2](00-prerequisites.md#2-laptop-wsl2-ubuntu-2404): Docker 
 
 **Check, on the laptop (WSL2):** `docker run --rm hello-world && kind version && kubectl version --client && helm version`.
 
+Create the working folder for this lab. The scripts and YAML files from B4 onward are saved here, and later commands expect to run from it.
+
+**On the laptop (WSL2):**
+
+```bash
+mkdir -p ~/gpu-fleet-lab/kueue-sim && cd ~/gpu-fleet-lab/kueue-sim
+```
+
+The folder exists and is your current directory. When you open a new terminal for this lab, `cd ~/gpu-fleet-lab/kueue-sim` first.
+
 ### B2. The cluster
 
 Create a kind cluster named `fleet-sim` and list its nodes.

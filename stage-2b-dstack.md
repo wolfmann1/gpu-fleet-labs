@@ -201,14 +201,17 @@ dstack project add --name main --url http://127.0.0.1:3000 --token <admin-token>
 
 ## Part C — The GPU node as an SSH fleet
 
-Create the lab repo on the laptop and copy in the shared scripts.
+Create the working folder for this lab on the laptop and copy in the shared scripts.
 
 **On the laptop (WSL2):**
 
 ```bash
+LABS=/mnt/c/projects/learning/gpu-fleet-labs
 mkdir -p ~/gpu-fleet-lab/dstack && cd ~/gpu-fleet-lab/dstack
-cp /path/to/labs/code/train_ddp.py /path/to/labs/code/preflight.py .
+cp "$LABS"/code/train_ddp.py "$LABS"/code/preflight.py .
 ```
+
+`LABS` is the folder where you cloned this repository, seen from WSL2; Windows drives appear under `/mnt/`, so `C:\projects\learning\gpu-fleet-labs` is `/mnt/c/projects/learning/gpu-fleet-labs`. Change the path if your clone is elsewhere.
 
 You are now in `~/gpu-fleet-lab/dstack` with `train_ddp.py` and `preflight.py` beside you. Every YAML file in this lab goes in this directory.
 

@@ -110,7 +110,7 @@ To check a YAML file before using it, on the laptop (WSL2): `python3 -c "import 
 
 Version numbers were current on 2026-09-28. Where a newer release exists, use it and read its release notes for renamed fields; Kueue in particular moved its API to `v1beta2` and renamed `cohort` to `cohortName`.
 
-Keep your notes, manifests and results in a `gpu-fleet-lab` working folder so the stage 4 documents can cite them.
+Each lab works in its own folder under `~/gpu-fleet-lab/` in WSL2 (`dstack`, `kueue-sim`, `k8s`, `eks`), created in the lab's first build step. Keep your notes, manifests and results there so the stage 4 documents can cite them. Where a lab needs the scripts from `code/`, it copies them from your clone of this repository.
 
 ## Licence
 

@@ -67,7 +67,33 @@ gpu-fleet-lab/eks/
 └── fsx.tf           optional FSx for Lustre
 ```
 
-`versions.tf` pins the Terraform and AWS provider versions and configures the backend. Keep state in S3 as you did for helix-core-on-azure (there it was an Azure storage account; the idea is the same).
+Create the working folder and copy in the shared scripts, which E1 loads into the cluster.
+
+**On the laptop (WSL2):**
+
+```bash
+LABS=/mnt/c/projects/learning/gpu-fleet-labs
+mkdir -p ~/gpu-fleet-lab/eks/code && cd ~/gpu-fleet-lab/eks
+cp "$LABS"/code/train_ddp.py "$LABS"/code/preflight.py code/
+```
+
+`LABS` is the folder where you cloned this repository, seen from WSL2; Windows drives appear under `/mnt/`, so `C:\projects\learning\gpu-fleet-labs` is `/mnt/c/projects/learning/gpu-fleet-labs`. Change the path if your clone is elsewhere. Run every command in this lab from `~/gpu-fleet-lab/eks`.
+
+Terraform keeps its record of what it built in a state file. Storing it in S3 keeps it off the laptop and lets you rebuild or destroy from any machine, as the Azure storage account did for helix-core-on-azure. The bucket has to exist before `terraform init`, so create it once with the AWS CLI, with versioning on so an overwritten state file can be recovered.
+
+**On the laptop (WSL2):**
+
+```bash
+BUCKET=gpu-lab-tfstate-$(aws sts get-caller-identity --query Account --output text)
+aws s3api create-bucket --bucket "$BUCKET" --region us-east-2 \
+    --create-bucket-configuration LocationConstraint=us-east-2
+aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+echo "$BUCKET"
+```
+
+Bucket names are global across all AWS accounts, so the account ID in the name keeps it unique. The last line prints the name; put it in place of `<your-tf-state-bucket>` in `versions.tf` below. The bucket stays when you run `terraform destroy`, which is what you want: it holds the state that `destroy` reads.
+
+`versions.tf` pins the Terraform and AWS provider versions and configures the S3 backend.
 
 **File on the laptop (WSL2):** `~/gpu-fleet-lab/eks/versions.tf`
 
