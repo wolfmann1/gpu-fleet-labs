@@ -104,7 +104,7 @@ Most files in these labs are YAML, and YAML uses indentation to show structure. 
 | Keep the indentation exactly as shown, two spaces per level | A key indented one space too far or too little becomes a child of the wrong parent, or a syntax error |
 | Paste whole blocks into a file rather than retyping them | Copying a block keeps its indentation intact |
 
-Editors can change indentation as you paste. In nano, it's safe by default. In vi or vim, run `:set paste` before pasting so auto-indent doesn't add spaces to every line. `kubectl edit` opens vi unless told otherwise; to use nano for the whole session, run `export KUBE_EDITOR=nano` (add it to `~/.bashrc` to keep it).
+To paste into a terminal editor, use the terminal's paste: **Ctrl+Shift+V** or a right-click in Windows Terminal. Editor shortcuts such as nano's Ctrl+U paste from the editor's own cut buffer, not the Windows clipboard. Editors can change indentation as you paste. In nano, it's safe by default; if pasted lines gain extra indentation, press Alt+I to turn off auto-indent and paste again. In vi or vim, run `:set paste` before pasting so auto-indent doesn't add spaces to every line. `kubectl edit` opens vi unless told otherwise; to use nano for the whole session, run `export KUBE_EDITOR=nano` (add it to `~/.bashrc` to keep it).
 
 To check a YAML file before using it, on the laptop (WSL2): `python3 -c "import yaml,sys; list(yaml.safe_load_all(open(sys.argv[1])))" file.yaml`. No output means the file parses; an error names the line and column to fix. For Kubernetes manifests, `kubectl apply --dry-run=server -f file.yaml` goes further and checks the objects against the cluster.
 
