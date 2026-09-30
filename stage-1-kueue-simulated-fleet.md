@@ -525,33 +525,63 @@ Fill team-a's quota exactly, put 96 GPUs of work on team-b, then ask for more on
 
 **What to notice:** `a-extra` stays **Pending**, with zero pods. It needs 48 GPUs; team-a is at quota and the cohort has 32 unused. Kueue won't admit part of it. `kubectl -n team-a describe workload` gives the reason in plain words.
 
-Now compare with plain Kubernetes, which has no gang admission. Kueue ignores Jobs without a queue label, so a copy of the template without the labels bypasses it:
+Now compare with plain Kubernetes, which has no gang admission. Kueue ignores Jobs that carry no queue label, so a second script that builds the same Job without Kueue's labels bypasses it. Kueue also won't add the flavor's node selector and toleration to a Job it ignores, so this script writes them into the pod spec itself. Leave `job.sh` unchanged; the later exercises still use it.
 
-1. `cp job.sh raw-job.sh` and delete the `labels:` block (the two `kueue.x-k8s.io` lines and the `labels:` key).
-2. Kueue won't inject the flavor's node selector and toleration either, so add these lines under the pod `spec:`, beside `restartPolicy`.
+Create `raw-job.sh` in your working folder with the contents below. Compared with `job.sh` it has no `labels:` block, takes no queue or priority argument, and adds `nodeSelector` and `tolerations` under the pod `spec:`.
 
-   **File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/raw-job.sh` (lines to add)
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/raw-job.sh`
 
-   ```yaml
-         nodeSelector: {instance-type: p5.48xlarge}
-         tolerations:
-         - {key: kwok.x-k8s.io/node, operator: Equal, value: fake, effect: NoSchedule}
-   ```
+```bash
+#!/usr/bin/env bash
+# Usage: ./raw-job.sh <namespace> <name> <nodes>
+# Same simulated training job as job.sh, without Kueue's labels.
+NS=$1 NAME=$2 NODES=$3
+cat <<EOF | kubectl create -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: $NAME
+  namespace: $NS
+spec:
+  parallelism: $NODES
+  completions: $NODES
+  completionMode: Indexed
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector: {instance-type: p5.48xlarge}
+      tolerations:
+      - {key: kwok.x-k8s.io/node, operator: Equal, value: fake, effect: NoSchedule}
+      containers:
+      - name: trainer
+        image: registry.k8s.io/pause:3.10   # never actually runs; kwok simulates it
+        resources:
+          requests: {cpu: "96", memory: 1Ti, nvidia.com/gpu: "8"}
+          limits:   {nvidia.com/gpu: "8"}
+EOF
+```
 
-   Save the file. `raw-job.sh` now creates a plain Job that the kube-scheduler places on the fake nodes without Kueue.
+The script takes three arguments:
 
-3. Delete the pending `a-extra` job, then submit a 6-node raw job in a new `nokueue` namespace and list its pods.
+| Argument | Example | Meaning |
+|---|---|---|
+| `<namespace>` | `nokueue` | Namespace to create the Job in; one with no LocalQueue, so nothing routes it to Kueue |
+| `<name>` | `raw` | The Job's name |
+| `<nodes>` | `6` | Number of pods, each asking for a whole 8-GPU node |
 
-   **On the laptop (WSL2):**
+Delete the pending `a-extra` job so it isn't competing for the free nodes, make the new script executable, then submit a 6-node raw job in a new `nokueue` namespace and list its pods.
 
-   ```bash
-   kubectl -n team-a delete job a-extra
-   kubectl create namespace nokueue
-   ./raw-job.sh nokueue unused raw 6
-   kubectl -n nokueue get pods -o wide
-   ```
+**On the laptop (WSL2):**
 
-Four pods start on the four free nodes and two stay Pending indefinitely. In a real training job those four would each hold 8 H100s, wait at the NCCL rendezvous for ranks that never arrive, and time out. Delete the `nokueue` namespace when done.
+```bash
+kubectl -n team-a delete job a-extra
+chmod +x raw-job.sh
+kubectl create namespace nokueue
+./raw-job.sh nokueue raw 6
+kubectl -n nokueue get pods -o wide
+```
+
+Four pods start on the four free nodes and two stay Pending indefinitely. In a real training job those four would each hold 8 H100s, wait at the NCCL rendezvous for ranks that never arrive, and time out. Delete the namespace when you're done, which also deletes the Job: `kubectl delete namespace nokueue`.
 
 ### E3. Borrowing
 
