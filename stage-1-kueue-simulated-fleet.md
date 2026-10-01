@@ -631,15 +631,68 @@ Then consider the policy question: who is allowed to use `deadline`? Kueue enfor
 
 ### E6. The dev queue
 
-Submit five one-node jobs to the `dev` queue, which has four single-GPU nodes behind it.
+The `dev` ClusterQueue covers the four single-GPU p5.4xlarge nodes, with a quota of 4 GPUs. Start by sending it five jobs from the usual template.
 
 **On the laptop (WSL2):**
 
 ```bash
 for i in 1 2 3 4 5; do ./job.sh dev dev dev-$i 1 batch; done
+kubectl -n dev get workloads
 ```
 
-The `dev` pods request 8 GPUs because of the template. Edit a copy of `job.sh` so each pod asks for `nvidia.com/gpu: "1"`, `cpu: "8"`, `memory: 64Gi`, and run it again.
+All five stay pending. Each pod from `job.sh` asks for 8 GPUs, more than the `dev` queue's whole quota, so Kueue can never admit them; `kubectl -n dev describe workload` gives the reason. Kueue rejects a request that can't fit before it ever reaches a node.
+
+Development work needs single-GPU pods. Delete the five jobs, then create a separate template for them so `job.sh` stays as it is for the other exercises.
+
+**On the laptop (WSL2):**
+
+```bash
+kubectl -n dev delete jobs --all
+```
+
+`dev-job.sh` is `job.sh` with a smaller pod: one GPU, 8 CPUs and 64 GiB of memory, sized for a p5.4xlarge. Kubernetes requires a GPU request to equal its limit, because GPUs can't be shared or overcommitted, so both are set to 1. Create the file in your working folder with the contents below.
+
+**File on the laptop (WSL2):** `~/gpu-fleet-lab/kueue-sim/dev-job.sh`
+
+```bash
+#!/usr/bin/env bash
+# Usage: ./dev-job.sh <namespace> <queue> <name> [priority-class]
+# One single-GPU pod, sized for a p5.4xlarge development node.
+NS=$1 Q=$2 NAME=$3 PRIO=${4:-batch}
+cat <<EOF | kubectl create -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: $NAME
+  namespace: $NS
+  labels:
+    kueue.x-k8s.io/queue-name: $Q
+    kueue.x-k8s.io/priority-class: $PRIO
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: dev
+        image: registry.k8s.io/pause:3.10   # never actually runs; kwok simulates it
+        resources:
+          requests: {cpu: "8", memory: 64Gi, nvidia.com/gpu: "1"}
+          limits:   {nvidia.com/gpu: "1"}
+EOF
+```
+
+`memory: 64Gi` needs its unit: a bare `64` means 64 bytes. Make the script executable and submit five single-GPU jobs to the `dev` queue.
+
+**On the laptop (WSL2):**
+
+```bash
+chmod +x dev-job.sh
+for i in 1 2 3 4 5; do ./dev-job.sh dev dev dev-$i; done
+kubectl -n dev get workloads
+kubectl -n dev get pods -o wide
+```
 
 **What to notice:** four are admitted onto the four singles; the fifth waits. The `dev` ClusterQueue has no cohort, so it can't borrow from the research teams and they can't borrow from it. Is that what you'd want? Separating interactive work from training capacity is common; the cost is idle singles when nobody is debugging.
 
