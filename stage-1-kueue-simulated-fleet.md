@@ -781,7 +781,56 @@ The dashboard opens with a 30-minute window that refreshes every 10 seconds. You
 
 #### Watch borrowing and reclaim
 
-Rerun E3 and E4 with the dashboard open. In **GPUs in use vs quota**, team-a's solid line rises above its dashed quota line when it borrows team-b's idle GPUs (E3), then drops back when team-b reclaims them (E4), at the same moment a bar appears in **Preemptions**. **Pending workloads** shows the evicted job returning to the queue. On a real fleet these four panels answer the question that decides whether a team needs Kueue at all: do the groups actually contend for GPUs, and how often?
+E3 and E4 depended on the jobs E2 left running, and E5 deleted those. This part rebuilds that state from nothing in three steps, so each change shows up on the dashboard on its own. Prometheus scrapes Kueue about every 30 seconds, so wait a minute after each step before you read the panels.
+
+The steps use `job.sh` from B8, which gives every pod 8 GPUs. If you changed it during E6, the jobs below are rejected with `must be equal to nvidia.com/gpu limit of 8`. Check the file first, then clear both research teams.
+
+**On the laptop (WSL2):**
+
+```bash
+cd ~/gpu-fleet-lab/kueue-sim
+grep -n "nvidia.com/gpu" job.sh
+kubectl delete jobs --all -n team-a
+kubectl delete jobs --all -n team-b
+```
+
+The `grep` should print one line in which both the request and the limit read `nvidia.com/gpu: "8"`, alongside `cpu: "96"` and `memory: 1Ti`. If it shows anything else, recreate `job.sh` from B8. The two deletes leave both teams with nothing running; jobs in the `dev` namespace can stay.
+
+**Step 1, the baseline.** team-a fills its own quota and team-b uses three quarters of its share.
+
+**On the laptop (WSL2):**
+
+```bash
+./job.sh team-a research a-base 16      # 16 nodes = 128 GPUs, team-a's whole quota
+./job.sh team-b research b-base 12      # 12 nodes = 96 GPUs of team-b's 128
+```
+
+After a minute, **GPUs in use vs quota** shows team-a's solid line on its dashed quota line at 128 and team-b's solid line at 96, below its quota. **Admitted** shows one workload per team.
+
+**Step 2, borrowing (E3).** team-b's job finishes, and team-a asks for 12 more nodes.
+
+**On the laptop (WSL2):**
+
+```bash
+kubectl -n team-b delete job b-base     # team-b goes idle
+./job.sh team-a research a-extra 12     # 96 more GPUs for team-a
+kubectl get clusterqueue team-a -o jsonpath='{.status.flavorsUsage}' | jq
+```
+
+The `jq` output shows `nvidia.com/gpu` with `total` 224 and `borrowed` 96. On the dashboard, team-a's solid line climbs to 224, above its dashed quota line, and team-b's falls to 0.
+
+**Step 3, reclaim (E4).** team-b comes back with an 8-node job against its own quota.
+
+**On the laptop (WSL2):**
+
+```bash
+./job.sh team-b research b-urgent 8     # 64 GPUs of team-b's guaranteed 128
+kubectl -n team-a get workloads
+```
+
+Only 32 GPUs are free, so Kueue evicts `a-extra`, the team-a workload running on borrowed quota. In the `get workloads` output it is no longer admitted. On the dashboard, team-a's line drops back to 128, team-b's rises to 64, a bar appears in **Preemptions**, and **Pending workloads** shows team-a with one waiting job. `a-extra` stays pending because it needs 96 GPUs and the cohort has 64 free.
+
+On a real fleet these four panels answer the question that decides whether a team needs Kueue at all: do the groups contend for GPUs, and how often? When you're finished, clear both teams with the two `kubectl delete jobs --all` commands above.
 
 If a panel stays empty, check that Prometheus is scraping Kueue. In a second terminal, run `kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-prometheus 9090` and open `http://localhost:9090` → **Status** → **Targets**: the Kueue target should be **UP**. Typing `kueue_` into the query box on Prometheus's main page lists the metric names your Kueue version exports. An empty **GPUs in use vs quota** panel with the others working means `enableClusterQueueResources` isn't in effect: repeat the first part of this exercise.
 
