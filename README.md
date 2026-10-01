@@ -67,8 +67,9 @@ A few choices trade security or resilience for convenience and are called out wh
 |---|---|---|
 | [code/train_ddp.py](code/train_ddp.py) | Stages 2B, 2, 3 | Small distributed training job with checkpoint and resume, throughput logging, and a switch to simulate slow data loading |
 | [code/preflight.py](code/preflight.py) | Stages 2, 3, 4 | GPU health and NCCL all-reduce check to run before a job starts |
+| [dashboards/kueue-fleet.json](dashboards/kueue-fleet.json) | Stage 1 (E7) | Grafana dashboard: pending and admitted workloads per team, GPUs in use against quota, preemptions |
 
-Both run anywhere PyTorch with CUDA is available, from one GPU up to several nodes, under `torchrun`.
+The two Python scripts run anywhere PyTorch with CUDA is available, from one GPU up to several nodes, under `torchrun`.
 
 ## How each guide is laid out
 

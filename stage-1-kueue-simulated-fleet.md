@@ -698,7 +698,39 @@ kubectl -n dev get pods -o wide
 
 ### E7. Queue depth in Grafana
 
-Print the Grafana admin password, then forward Grafana's service to port 3001 on the laptop. The port-forward holds the terminal until you stop it.
+This exercise builds a dashboard that shows, per team, how many workloads are waiting, how many are running, how many GPUs each team holds against its quota, and when preemptions happen. It has four parts: turn on Kueue's per-queue resource metrics, open Grafana, build one panel by hand to learn the editor, then import the full dashboard from this repository.
+
+#### Turn on per-queue resource metrics
+
+Kueue always exports its queue counts, but the GPU usage and quota metrics (`kueue_cluster_queue_resource_usage`, `kueue_cluster_queue_nominal_quota`) are off until `metrics.enableClusterQueueResources` is set in the controller configuration. Add it to the `kueue-config.yaml` you extracted in B6. The configuration already has a top-level `metrics:` block, so the new line goes inside that block, indented two spaces; `sed` inserts it directly under `metrics:`.
+
+**On the laptop (WSL2):**
+
+```bash
+cd ~/gpu-fleet-lab/kueue-sim
+sed -i '/^metrics:/a\  enableClusterQueueResources: true' kueue-config.yaml
+python3 -c "import yaml; print(yaml.safe_load(open('kueue-config.yaml'))['metrics'])"
+```
+
+The check prints the `metrics` block with both keys, for example `{'bindAddress': ':8443', 'enableClusterQueueResources': True}`. If `enableClusterQueueResources` appears twice in the file, `sed` ran twice; delete the extra line in an editor.
+
+Load the configuration back and restart the controller, as in B6.
+
+**On the laptop (WSL2):**
+
+```bash
+kubectl -n kueue-system create configmap kueue-manager-config \
+    --from-file=controller_manager_config.yaml=kueue-config.yaml \
+    --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kueue-system rollout restart deployment kueue-controller-manager
+kubectl -n kueue-system rollout status deployment kueue-controller-manager
+```
+
+When the rollout finishes, the controller exports the resource metrics on its next scrape, which Prometheus collects within about 30 seconds.
+
+#### Open Grafana
+
+The Grafana that kube-prometheus-stack installed in B5 runs inside the cluster. Print its admin password, then forward its service to port 3001 on the laptop. The port-forward holds the terminal until you press Ctrl+C, so use a terminal you can leave open.
 
 **On the laptop (WSL2):**
 
@@ -707,18 +739,51 @@ kubectl -n monitoring get secret kps-grafana -o jsonpath='{.data.admin-password}
 kubectl -n monitoring port-forward svc/kps-grafana 3001:80
 ```
 
-Open `http://localhost:3001` (user `admin`). Create a dashboard with these PromQL panels:
+Open `http://localhost:3001` in a Windows browser (WSL2 forwards localhost) and sign in as `admin` with the printed password. The chart already connected Grafana to the cluster's Prometheus as a data source named **Prometheus**.
 
-| Panel | Query |
-|---|---|
-| Pending workloads per team | `sum by (cluster_queue) (kueue_pending_workloads)` |
-| Admitted workloads per team | `sum by (cluster_queue) (kueue_admitted_active_workloads)` |
-| GPUs in use per team | `sum by (cluster_queue) (kueue_cluster_queue_resource_usage{resource="nvidia.com/gpu"})` |
-| GPU quota per team | `sum by (cluster_queue) (kueue_cluster_queue_nominal_quota{resource="nvidia.com/gpu"})` |
+#### Build one panel by hand
 
-If a query returns nothing, open Prometheus (`port-forward svc/kps-kube-prometheus-stack-prometheus 9090`) → Status → Targets and check the Kueue target is up, then search the metric browser for `kueue_` to see the exact names in your version.
+Building a panel yourself shows how a query becomes a graph. This one plots pending workloads per team. **In Grafana, in the browser:**
 
-Rerun E3 and E4 while watching. Usage above quota is borrowing; the drop on the reclaim is preemption. These panels show queue depth, and on a real fleet they'd be the evidence for whether teams actually contend for GPUs.
+1. In the left menu choose **Dashboards**, then **New** → **New dashboard**, then **Add visualization**.
+2. When asked for a data source, choose **Prometheus**. The panel editor opens with a graph at the top and a query row (**A**) underneath.
+3. In the query row, switch the editor from **Builder** to **Code** with the toggle at the row's right-hand side, then paste the query:
+
+   ```
+   sum by (cluster_queue) (kueue_pending_workloads)
+   ```
+
+   Click **Run queries**. `kueue_pending_workloads` has one series per queue and status; `sum by (cluster_queue)` adds them into one line per team.
+4. Under the query, open **Options**, set **Legend** to **Custom** and enter `{{cluster_queue}}`, so each line is labelled with the team's queue name.
+5. In the right-hand pane, under **Panel options**, set **Title** to `Pending workloads per team`. Leave the visualization type as **Time series**.
+6. Click **Back to dashboard**, then **Save dashboard** (top right), name it `Kueue scratch`, and save.
+
+Set the time range (top right) to **Last 15 minutes** and the refresh to **10s**. With the jobs from the earlier exercises still in place, the `team-a` line sits above zero wherever a team-a job is waiting.
+
+#### Import the full dashboard
+
+The repository contains the complete dashboard as JSON, `dashboards/kueue-fleet.json`. It has four panels:
+
+| Panel | Query | What it shows |
+|---|---|---|
+| Pending workloads per team | `sum by (cluster_queue) (kueue_pending_workloads)` | Queue depth: work waiting for admission |
+| Admitted workloads per team | `sum by (cluster_queue) (kueue_admitted_active_workloads)` | Work running |
+| GPUs in use vs quota | `kueue_cluster_queue_resource_usage` and `kueue_cluster_queue_nominal_quota` for `nvidia.com/gpu`, per queue | Usage as a solid line, quota as a dashed line; solid above dashed is borrowing |
+| Preemptions (last 5 minutes) | `sum by (preempting_cluster_queue) (increase(kueue_preempted_workloads_total[5m]))` | Bars when a team's workload evicts another |
+
+**In Grafana, in the browser:**
+
+1. **Dashboards** → **New** → **Import**.
+2. Click **Upload dashboard JSON file** and choose `kueue-fleet.json` from the `dashboards` folder of your clone (on Windows, `C:\projects\learning\gpu-fleet-labs\dashboards\kueue-fleet.json`).
+3. Grafana asks for the **Prometheus** data source the dashboard should use; choose **Prometheus** and click **Import**.
+
+The dashboard opens with a 30-minute window that refreshes every 10 seconds. You can delete `Kueue scratch` now, or keep it to experiment with.
+
+#### Watch borrowing and reclaim
+
+Rerun E3 and E4 with the dashboard open. In **GPUs in use vs quota**, team-a's solid line rises above its dashed quota line when it borrows team-b's idle GPUs (E3), then drops back when team-b reclaims them (E4), at the same moment a bar appears in **Preemptions**. **Pending workloads** shows the evicted job returning to the queue. On a real fleet these four panels answer the question that decides whether a team needs Kueue at all: do the groups actually contend for GPUs, and how often?
+
+If a panel stays empty, check that Prometheus is scraping Kueue. In a second terminal, run `kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-prometheus 9090` and open `http://localhost:9090` → **Status** → **Targets**: the Kueue target should be **UP**. Typing `kueue_` into the query box on Prometheus's main page lists the metric names your Kueue version exports. An empty **GPUs in use vs quota** panel with the others working means `enableClusterQueueResources` isn't in effect: repeat the first part of this exercise.
 
 ---
 
